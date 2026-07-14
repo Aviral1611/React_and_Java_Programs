@@ -2,7 +2,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -43,7 +42,12 @@ public class Main {
     
     private static void loadProperties() {
         Properties prop = new Properties();
-        try (InputStream input = new FileInputStream("config.properties")) {
+        // Load using ClassLoader so the file can just be placed in the src folder
+        try (InputStream input = Main.class.getClassLoader().getResourceAsStream("config.properties")) {
+            if (input == null) {
+                System.err.println("Sorry, unable to find config.properties in the classpath (make sure it's in the 'src' folder)");
+                return;
+            }
             prop.load(input);
             DB_URL = prop.getProperty("db.url");
             DB_USER = prop.getProperty("db.user");
@@ -52,7 +56,7 @@ public class Main {
             JWT_EXPIRATION = Long.parseLong(prop.getProperty("jwt.expiration", "3600000"));
         } catch (IOException ex) {
             ex.printStackTrace();
-            System.err.println("Failed to load config.properties. Make sure it's in the backend root directory.");
+            System.err.println("Failed to load config.properties.");
         }
     }
 
