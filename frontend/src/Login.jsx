@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { LogIn, Lock, User } from 'lucide-react';
 import './index.css';
 
@@ -7,6 +8,7 @@ function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -33,8 +35,8 @@ function Login() {
       setIsLoading(false);
       
       if (response.ok) {
-         // Optionally save token: localStorage.setItem('token', data.token);
-         alert(`Logged in successfully as ${data.username} (${data.role})!`);
+         localStorage.setItem('token', data.token);
+         navigate('/hello');
       } else {
          setError(data.error || 'Invalid username or password');
       }
