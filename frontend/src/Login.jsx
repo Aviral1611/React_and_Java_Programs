@@ -19,16 +19,29 @@ function Login() {
     
     setIsLoading(true);
     
-    // TODO: Connect to Java Backend
-    setTimeout(() => {
+    // Connect to Java Backend
+    try {
+      const response = await fetch('http://localhost:8080/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password })
+      });
+      
+      const data = await response.json();
       setIsLoading(false);
-      // Dummy validation for now
-      if(username === 'admin' && password === 'password') {
-         alert("Logged in successfully!");
+      
+      if (response.ok) {
+         // Optionally save token: localStorage.setItem('token', data.token);
+         alert(`Logged in successfully as ${data.username} (${data.role})!`);
       } else {
-         setError('Invalid username or password');
+         setError(data.error || 'Invalid username or password');
       }
-    }, 1500);
+    } catch (err) {
+      setIsLoading(false);
+      setError('Failed to connect to the server. Is the Java backend running?');
+    }
   };
 
   return (
