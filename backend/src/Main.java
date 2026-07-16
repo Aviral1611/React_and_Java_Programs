@@ -1,3 +1,5 @@
+package backend;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -127,7 +129,8 @@ public class Main {
 
                     if (username != null && password != null && authenticateUser(username, password)) {
                         System.out.println("[LoginHandler] Authentication SUCCESS for user: " + username);
-                        // Generate JWT token
+                        
+                        System.out.println("[LoginHandler] Generating JWT...");
                         SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
                         String token = Jwts.builder()
                                 .setSubject(username)
@@ -136,31 +139,48 @@ public class Main {
                                 .setExpiration(new Date(System.currentTimeMillis() + JWT_EXPIRATION))
                                 .signWith(key)
                                 .compact();
+                        System.out.println("[LoginHandler] JWT generated successfully, length: " + token.length());
                                 
                         String response = "{\"token\": \"" + token + "\", \"role\": \"USER\", \"username\": \"" + username + "\"}";
+                        byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
+                        System.out.println("[LoginHandler] Response size: " + responseBytes.length + " bytes");
+                        
                         t.getResponseHeaders().set("Content-Type", "application/json");
-                        t.sendResponseHeaders(200, response.getBytes().length);
+                        t.sendResponseHeaders(200, responseBytes.length);
+                        System.out.println("[LoginHandler] Headers sent");
+                        
                         OutputStream os = t.getResponseBody();
-                        os.write(response.getBytes());
+                        os.write(responseBytes);
+                        os.flush();
                         os.close();
+                        System.out.println("[LoginHandler] Response sent successfully!");
                     } else {
                         System.out.println("[LoginHandler] Authentication FAILED for user: " + username);
                         String response = "{\"error\": \"Invalid credentials\"}";
+                        byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
                         t.getResponseHeaders().set("Content-Type", "application/json");
-                        t.sendResponseHeaders(401, response.getBytes().length);
+                        t.sendResponseHeaders(401, responseBytes.length);
                         OutputStream os = t.getResponseBody();
-                        os.write(response.getBytes());
+                        os.write(responseBytes);
+                        os.flush();
                         os.close();
                     }
                 } catch (Exception e) {
                     System.err.println("[LoginHandler] CRASH during request handling:");
                     e.printStackTrace();
-                    String response = "{\"error\": \"Internal server error\"}";
-                    t.getResponseHeaders().set("Content-Type", "application/json");
-                    t.sendResponseHeaders(500, response.getBytes().length);
-                    OutputStream os = t.getResponseBody();
-                    os.write(response.getBytes());
-                    os.close();
+                    try {
+                        String response = "{\"error\": \"Internal server error\"}";
+                        byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
+                        t.getResponseHeaders().set("Content-Type", "application/json");
+                        t.sendResponseHeaders(500, responseBytes.length);
+                        OutputStream os = t.getResponseBody();
+                        os.write(responseBytes);
+                        os.flush();
+                        os.close();
+                    } catch (Exception ex) {
+                        System.err.println("[LoginHandler] Could not send error response either:");
+                        ex.printStackTrace();
+                    }
                 }
             } else {
                 t.sendResponseHeaders(405, -1);
