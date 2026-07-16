@@ -13,14 +13,13 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.Date;
+import java.util.Base64;
 import java.util.Properties;
-import javax.crypto.SecretKey;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 
 public class Main {
     private static String DB_URL;
@@ -37,17 +36,16 @@ public class Main {
         server.createContext("/api/hello", new HelloHandler());
         server.createContext("/api/login", new LoginHandler());
         
-        server.setExecutor(null); // creates a default executor
+        server.setExecutor(null);
         System.out.println("Server is starting on port 8080...");
         server.start();
     }
     
     private static void loadProperties() {
         Properties prop = new Properties();
-        // Load using ClassLoader so the file can just be placed in the src folder
         try (InputStream input = Main.class.getClassLoader().getResourceAsStream("config.properties")) {
             if (input == null) {
-                System.err.println("Sorry, unable to find config.properties in the classpath (make sure it's in the 'src' folder)");
+                System.err.println("Unable to find config.properties in the classpath (make sure it's in the 'src' folder)");
                 return;
             }
             prop.load(input);
@@ -56,17 +54,101 @@ public class Main {
             DB_PASSWORD = prop.getProperty("db.password");
             JWT_SECRET = prop.getProperty("jwt.secret");
             JWT_EXPIRATION = Long.parseLong(prop.getProperty("jwt.expiration", "3600000"));
+            System.out.println("[Config] Properties loaded successfully.");
         } catch (IOException ex) {
             ex.printStackTrace();
             System.err.println("Failed to load config.properties.");
         }
     }
 
+    // ===== JWT Utility Methods (using built-in Java crypto, no external JARs) =====
+
+    private static String base64UrlEncode(byte[] data) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(data);
+    }
+
+    private static byte[] base64UrlDecode(String data) {
+        return Base64.getUrlDecoder().decode(data);
+    }
+
+    private static String generateJwt(String username, String role) throws Exception {
+        // Header
+        String header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+        String encodedHeader = base64UrlEncode(header.getBytes(StandardCharsets.UTF_8));
+
+        // Payload
+        long now = System.currentTimeMillis() / 1000;
+        long exp = now + (JWT_EXPIRATION / 1000);
+        String payload = "{\"sub\":\"" + username + "\",\"role\":\"" + role + "\",\"iat\":" + now + ",\"exp\":" + exp + "}";
+        String encodedPayload = base64UrlEncode(payload.getBytes(StandardCharsets.UTF_8));
+
+        // Signature
+        String content = encodedHeader + "." + encodedPayload;
+        Mac mac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec keySpec = new SecretKeySpec(JWT_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        mac.init(keySpec);
+        String signature = base64UrlEncode(mac.doFinal(content.getBytes(StandardCharsets.UTF_8)));
+
+        return content + "." + signature;
+    }
+
+    private static String validateJwt(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length != 3) return null;
+
+            // Verify signature
+            String content = parts[0] + "." + parts[1];
+            Mac mac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec keySpec = new SecretKeySpec(JWT_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            mac.init(keySpec);
+            String expectedSignature = base64UrlEncode(mac.doFinal(content.getBytes(StandardCharsets.UTF_8)));
+
+            if (!expectedSignature.equals(parts[2])) {
+                System.out.println("[JWT] Signature mismatch");
+                return null;
+            }
+
+            // Decode payload and check expiry
+            String payloadJson = new String(base64UrlDecode(parts[1]), StandardCharsets.UTF_8);
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode payload = mapper.readTree(payloadJson);
+
+            long exp = payload.get("exp").asLong();
+            if (System.currentTimeMillis() / 1000 > exp) {
+                System.out.println("[JWT] Token expired");
+                return null;
+            }
+
+            return payload.get("sub").asText(); // returns the username
+        } catch (Exception e) {
+            System.err.println("[JWT] Validation error:");
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    // ===== Helper to send JSON responses =====
+
+    private static void sendJsonResponse(HttpExchange t, int statusCode, String json) throws IOException {
+        byte[] responseBytes = json.getBytes(StandardCharsets.UTF_8);
+        t.getResponseHeaders().set("Content-Type", "application/json");
+        t.sendResponseHeaders(statusCode, responseBytes.length);
+        OutputStream os = t.getResponseBody();
+        os.write(responseBytes);
+        os.flush();
+        os.close();
+    }
+
+    // ===== CORS =====
+
     private static void setCorsHeaders(HttpExchange t) {
         t.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
         t.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         t.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
+
+    // ===== Handlers =====
 
     static class HelloHandler implements HttpHandler {
         @Override
@@ -80,27 +162,18 @@ public class Main {
             // Validate JWT Token
             String authHeader = t.getRequestHeaders().getFirst("Authorization");
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                t.sendResponseHeaders(401, -1);
+                sendJsonResponse(t, 401, "{\"error\": \"Missing or invalid Authorization header\"}");
                 return;
             }
             
             String token = authHeader.substring(7);
-            try {
-                SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
-                Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
-            } catch (Exception e) {
-                // Invalid or expired token
-                t.sendResponseHeaders(401, -1);
+            String username = validateJwt(token);
+            if (username == null) {
+                sendJsonResponse(t, 401, "{\"error\": \"Invalid or expired token\"}");
                 return;
             }
             
-            String response = "{\"message\": \"Hello from the protected Java Backend!\"}";
-            t.getResponseHeaders().set("Content-Type", "application/json");
-            t.sendResponseHeaders(200, response.getBytes().length);
-            
-            OutputStream os = t.getResponseBody();
-            os.write(response.getBytes());
-            os.close();
+            sendJsonResponse(t, 200, "{\"message\": \"Hello from the protected Java Backend!\", \"user\": \"" + username + "\"}");
         }
     }
 
@@ -131,54 +204,23 @@ public class Main {
                         System.out.println("[LoginHandler] Authentication SUCCESS for user: " + username);
                         
                         System.out.println("[LoginHandler] Generating JWT...");
-                        SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
-                        String token = Jwts.builder()
-                                .setSubject(username)
-                                .claim("role", "USER")
-                                .setIssuedAt(new Date())
-                                .setExpiration(new Date(System.currentTimeMillis() + JWT_EXPIRATION))
-                                .signWith(key)
-                                .compact();
-                        System.out.println("[LoginHandler] JWT generated successfully, length: " + token.length());
+                        String token = generateJwt(username, "USER");
+                        System.out.println("[LoginHandler] JWT generated, length: " + token.length());
                                 
                         String response = "{\"token\": \"" + token + "\", \"role\": \"USER\", \"username\": \"" + username + "\"}";
-                        byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
-                        System.out.println("[LoginHandler] Response size: " + responseBytes.length + " bytes");
-                        
-                        t.getResponseHeaders().set("Content-Type", "application/json");
-                        t.sendResponseHeaders(200, responseBytes.length);
-                        System.out.println("[LoginHandler] Headers sent");
-                        
-                        OutputStream os = t.getResponseBody();
-                        os.write(responseBytes);
-                        os.flush();
-                        os.close();
+                        sendJsonResponse(t, 200, response);
                         System.out.println("[LoginHandler] Response sent successfully!");
                     } else {
                         System.out.println("[LoginHandler] Authentication FAILED for user: " + username);
-                        String response = "{\"error\": \"Invalid credentials\"}";
-                        byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
-                        t.getResponseHeaders().set("Content-Type", "application/json");
-                        t.sendResponseHeaders(401, responseBytes.length);
-                        OutputStream os = t.getResponseBody();
-                        os.write(responseBytes);
-                        os.flush();
-                        os.close();
+                        sendJsonResponse(t, 401, "{\"error\": \"Invalid credentials\"}");
                     }
-                } catch (Exception e) {
-                    System.err.println("[LoginHandler] CRASH during request handling:");
+                } catch (Throwable e) {
+                    System.err.println("[LoginHandler] CRASH:");
                     e.printStackTrace();
                     try {
-                        String response = "{\"error\": \"Internal server error\"}";
-                        byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
-                        t.getResponseHeaders().set("Content-Type", "application/json");
-                        t.sendResponseHeaders(500, responseBytes.length);
-                        OutputStream os = t.getResponseBody();
-                        os.write(responseBytes);
-                        os.flush();
-                        os.close();
+                        sendJsonResponse(t, 500, "{\"error\": \"Internal server error\"}");
                     } catch (Exception ex) {
-                        System.err.println("[LoginHandler] Could not send error response either:");
+                        System.err.println("[LoginHandler] Could not send error response:");
                         ex.printStackTrace();
                     }
                 }
@@ -199,6 +241,7 @@ public class Main {
                     }
                 }
             } catch (Exception e) {
+                System.err.println("[DB] Authentication error:");
                 e.printStackTrace();
             }
             return false;
