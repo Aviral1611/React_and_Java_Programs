@@ -30,19 +30,27 @@ function Login() {
         },
         body: JSON.stringify({ username, password })
       });
-      
-      const data = await response.json();
+
       setIsLoading(false);
-      
+
       if (response.ok) {
-         localStorage.setItem('token', data.token);
-         navigate('/hello');
+        const data = await response.json();
+        localStorage.setItem('token', data.token);
+        navigate('/hello');
+      } else if (response.status === 401) {
+        // Try to read the error message from backend, fallback gracefully
+        try {
+          const data = await response.json();
+          setError(data.error || 'Invalid username or password');
+        } catch {
+          setError('Invalid username or password');
+        }
       } else {
-         setError(data.error || 'Invalid username or password');
+        setError(`Server error: ${response.status}`);
       }
     } catch (err) {
       setIsLoading(false);
-      setError('Failed to connect to the server. Is the Java backend running?');
+      setError('Could not reach the server. Make sure the Java backend is running on port 8080.');
     }
   };
 
