@@ -105,42 +105,59 @@ public class Main {
     static class LoginHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange t) throws IOException {
+            System.out.println("[LoginHandler] Received " + t.getRequestMethod() + " request");
             setCorsHeaders(t);
             if ("OPTIONS".equals(t.getRequestMethod())) {
                 t.sendResponseHeaders(204, -1);
+                System.out.println("[LoginHandler] Responded to OPTIONS preflight");
                 return;
             }
 
             if ("POST".equals(t.getRequestMethod())) {
-                InputStream is = t.getRequestBody();
-                String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-                
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode jsonNode = mapper.readTree(body);
-                String username = jsonNode.has("username") ? jsonNode.get("username").asText() : null;
-                String password = jsonNode.has("password") ? jsonNode.get("password").asText() : null;
+                try {
+                    InputStream is = t.getRequestBody();
+                    String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                    System.out.println("[LoginHandler] Request body: " + body);
+                    
+                    ObjectMapper mapper = new ObjectMapper();
+                    JsonNode jsonNode = mapper.readTree(body);
+                    String username = jsonNode.has("username") ? jsonNode.get("username").asText() : null;
+                    String password = jsonNode.has("password") ? jsonNode.get("password").asText() : null;
+                    System.out.println("[LoginHandler] Attempting login for user: " + username);
 
-                if (username != null && password != null && authenticateUser(username, password)) {
-                    // Generate JWT token
-                    SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
-                    String token = Jwts.builder()
-                            .setSubject(username)
-                            .claim("role", "USER") // Ideally, fetch role from DB
-                            .setIssuedAt(new Date())
-                            .setExpiration(new Date(System.currentTimeMillis() + JWT_EXPIRATION))
-                            .signWith(key)
-                            .compact();
-                            
-                    String response = "{\"token\": \"" + token + "\", \"role\": \"USER\", \"username\": \"" + username + "\"}";
+                    if (username != null && password != null && authenticateUser(username, password)) {
+                        System.out.println("[LoginHandler] Authentication SUCCESS for user: " + username);
+                        // Generate JWT token
+                        SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
+                        String token = Jwts.builder()
+                                .setSubject(username)
+                                .claim("role", "USER")
+                                .setIssuedAt(new Date())
+                                .setExpiration(new Date(System.currentTimeMillis() + JWT_EXPIRATION))
+                                .signWith(key)
+                                .compact();
+                                
+                        String response = "{\"token\": \"" + token + "\", \"role\": \"USER\", \"username\": \"" + username + "\"}";
+                        t.getResponseHeaders().set("Content-Type", "application/json");
+                        t.sendResponseHeaders(200, response.getBytes().length);
+                        OutputStream os = t.getResponseBody();
+                        os.write(response.getBytes());
+                        os.close();
+                    } else {
+                        System.out.println("[LoginHandler] Authentication FAILED for user: " + username);
+                        String response = "{\"error\": \"Invalid credentials\"}";
+                        t.getResponseHeaders().set("Content-Type", "application/json");
+                        t.sendResponseHeaders(401, response.getBytes().length);
+                        OutputStream os = t.getResponseBody();
+                        os.write(response.getBytes());
+                        os.close();
+                    }
+                } catch (Exception e) {
+                    System.err.println("[LoginHandler] CRASH during request handling:");
+                    e.printStackTrace();
+                    String response = "{\"error\": \"Internal server error\"}";
                     t.getResponseHeaders().set("Content-Type", "application/json");
-                    t.sendResponseHeaders(200, response.getBytes().length);
-                    OutputStream os = t.getResponseBody();
-                    os.write(response.getBytes());
-                    os.close();
-                } else {
-                    String response = "{\"error\": \"Invalid credentials\"}";
-                    t.getResponseHeaders().set("Content-Type", "application/json");
-                    t.sendResponseHeaders(401, response.getBytes().length);
+                    t.sendResponseHeaders(500, response.getBytes().length);
                     OutputStream os = t.getResponseBody();
                     os.write(response.getBytes());
                     os.close();
