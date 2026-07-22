@@ -36,7 +36,7 @@ function Login() {
       if (response.ok) {
         const data = await response.json();
         localStorage.setItem('token', data.token);
-        navigate('/hello');
+        navigate('/dashboard');
       } else if (response.status === 401) {
         // Try to read the error message from backend, fallback gracefully
         try {
