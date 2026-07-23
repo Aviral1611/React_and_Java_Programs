@@ -15,6 +15,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.Base64;
 import java.util.Properties;
+import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -279,8 +280,12 @@ public class Main {
                 if (method.equals("GET") && path.equals("/api/documents")) {
                     handleGetDocuments(t);
                 } 
+                // Route: POST /api/documents (Create new document)
+                else if (method.equals("POST") && path.equals("/api/documents")) {
+                    handlePostDocument(t, username);
+                }
                 else {
-                    // We will add POST, PUT, and /history here later
+                    // We will add PUT and /history here later
                     sendJsonResponse(t, 404, "{\"error\": \"Not Found\"}");
                 }
             } catch (Exception e) {
@@ -316,6 +321,36 @@ public class Main {
             jsonBuilder.append("]");
             
             sendJsonResponse(t, 200, jsonBuilder.toString());
+        }
+
+        private void handlePostDocument(HttpExchange t, String username) throws Exception {
+            InputStream is = t.getRequestBody();
+            String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode jsonNode = mapper.readTree(body);
+            String title = jsonNode.has("title") ? jsonNode.get("title").asText() : "";
+            String content = jsonNode.has("content") ? jsonNode.get("content").asText() : "";
+            
+            if (title.trim().isEmpty() || content.trim().isEmpty()) {
+                sendJsonResponse(t, 400, "{\"error\": \"Title and content are required\"}");
+                return;
+            }
+
+            String docId = UUID.randomUUID().toString();
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String sql = "INSERT INTO documents (doc_id, title, content, last_updated_by) VALUES (?, ?, ?, ?)";
+                try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    pstmt.setString(1, docId);
+                    pstmt.setString(2, title);
+                    pstmt.setString(3, content);
+                    pstmt.setString(4, username);
+                    pstmt.executeUpdate();
+                }
+            }
+
+            sendJsonResponse(t, 201, "{\"message\": \"Document created\", \"doc_id\": \"" + docId + "\"}");
         }
     }
 }
