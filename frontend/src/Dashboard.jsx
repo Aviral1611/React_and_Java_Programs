@@ -25,17 +25,6 @@ function Dashboard() {
       console.error('Could not decode token payload');
     }
 
-    // TODO: Replace with actual backend fetch once API is ready
-    // Mock data for now
-    setTimeout(() => {
-      setDocuments([
-        { doc_id: '1', title: 'Project Alpha - Draft', last_updated_by: 'admin', last_updated_at: new Date().toISOString() },
-        { doc_id: '2', title: 'Q3 Financial Report', last_updated_by: 'jane_doe', last_updated_at: new Date(Date.now() - 86400000).toISOString() }
-      ]);
-      setLoading(false);
-    }, 500);
-
-    /* Actual Implementation will look like this:
     const fetchDocuments = async () => {
       try {
         const response = await fetch('http://localhost:8080/api/documents', {
@@ -56,8 +45,8 @@ function Dashboard() {
         setLoading(false);
       }
     };
+    
     fetchDocuments();
-    */
   }, [navigate]);
 
   const handleLogout = () => {

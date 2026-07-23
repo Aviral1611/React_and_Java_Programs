@@ -35,6 +35,7 @@ public class Main {
         
         server.createContext("/api/hello", new HelloHandler());
         server.createContext("/api/login", new LoginHandler());
+        server.createContext("/api/documents", new DocumentHandler());
         
         server.setExecutor(null);
         System.out.println("Server is starting on port 8080...");
@@ -245,6 +246,76 @@ public class Main {
                 e.printStackTrace();
             }
             return false;
+        }
+    }
+    static class DocumentHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            setCorsHeaders(t);
+            if ("OPTIONS".equals(t.getRequestMethod())) {
+                t.sendResponseHeaders(204, -1);
+                return;
+            }
+
+            // 1. Validate JWT Token for all /api/documents routes
+            String authHeader = t.getRequestHeaders().getFirst("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                sendJsonResponse(t, 401, "{\"error\": \"Missing or invalid Authorization header\"}");
+                return;
+            }
+            
+            String token = authHeader.substring(7);
+            String username = validateJwt(token);
+            if (username == null) {
+                sendJsonResponse(t, 401, "{\"error\": \"Invalid or expired token\"}");
+                return;
+            }
+
+            String path = t.getRequestURI().getPath();
+            String method = t.getRequestMethod();
+
+            try {
+                // Route: GET /api/documents (List all documents)
+                if (method.equals("GET") && path.equals("/api/documents")) {
+                    handleGetDocuments(t);
+                } 
+                else {
+                    // We will add POST, PUT, and /history here later
+                    sendJsonResponse(t, 404, "{\"error\": \"Not Found\"}");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJsonResponse(t, 500, "{\"error\": \"Internal server error\"}");
+            }
+        }
+
+        private void handleGetDocuments(HttpExchange t) throws Exception {
+            StringBuilder jsonBuilder = new StringBuilder();
+            jsonBuilder.append("[");
+            
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query = "SELECT doc_id, title, last_updated_by, last_updated_at FROM documents ORDER BY last_updated_at DESC";
+                try (PreparedStatement stmt = conn.prepareStatement(query);
+                     ResultSet rs = stmt.executeQuery()) {
+                    
+                    boolean first = true;
+                    while (rs.next()) {
+                        if (!first) {
+                            jsonBuilder.append(",");
+                        }
+                        first = false;
+                        jsonBuilder.append("{");
+                        jsonBuilder.append("\"doc_id\":\"").append(rs.getString("doc_id")).append("\",");
+                        jsonBuilder.append("\"title\":\"").append(rs.getString("title").replace("\"", "\\\"")).append("\",");
+                        jsonBuilder.append("\"last_updated_by\":\"").append(rs.getString("last_updated_by")).append("\",");
+                        jsonBuilder.append("\"last_updated_at\":\"").append(rs.getTimestamp("last_updated_at")).append("\"");
+                        jsonBuilder.append("}");
+                    }
+                }
+            }
+            jsonBuilder.append("]");
+            
+            sendJsonResponse(t, 200, jsonBuilder.toString());
         }
     }
 }
