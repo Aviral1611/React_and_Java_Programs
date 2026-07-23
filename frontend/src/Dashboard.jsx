@@ -83,7 +83,7 @@ function Dashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '600' }}>Your Documents</h2>
           <button 
-            onClick={() => alert("Will navigate to /editor/new once implemented")}
+            onClick={() => navigate('/editor/new')}
             className="btn-primary" 
             style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}
           >
@@ -132,7 +132,7 @@ function Dashboard() {
                     <Clock size={18} />
                   </button>
                   <button 
-                    onClick={() => alert(`Will open editor for ${doc.doc_id}`)}
+                    onClick={() => navigate(`/editor/${doc.doc_id}`)}
                     style={{ background: 'rgba(59, 130, 246, 0.1)', border: 'none', color: 'var(--primary)', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
                   >
                     <Edit size={18} /> Edit
