@@ -88,14 +88,30 @@ function DocumentHistory() {
                   padding: '1.25rem',
                   flexGrow: 1
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: '500' }}>{entry.old_title}</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '500', margin: 0 }}>
+                      {entry.version_number ? `[v${entry.version_number}] ` : ''}{entry.old_title}
+                    </h3>
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                       {new Date(entry.changed_at).toLocaleString()}
                     </span>
                   </div>
-                  <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                    Saved by <span style={{ color: 'var(--text-main)' }}>{entry.changed_by}</span>
+                  
+                  {/* Display the old content that was missing */}
+                  <div style={{ 
+                    background: 'rgba(0, 0, 0, 0.2)', 
+                    padding: '1rem', 
+                    borderRadius: '6px', 
+                    marginBottom: '1rem',
+                    fontSize: '0.95rem',
+                    color: 'var(--text-main)',
+                    whiteSpace: 'pre-wrap'
+                  }}>
+                    {entry.old_content}
+                  </div>
+
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>
+                    Saved by <span style={{ color: 'var(--text-main)', fontWeight: '500' }}>{entry.changed_by}</span>
                   </p>
                 </div>
               </div>
