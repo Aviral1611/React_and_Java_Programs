@@ -146,7 +146,7 @@ public class Main {
 
     private static void setCorsHeaders(HttpExchange t) {
         t.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
-        t.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        t.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
         t.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 
