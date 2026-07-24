@@ -464,7 +464,7 @@ public class Main {
             jsonBuilder.append("[");
             
             try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                String query = "SELECT old_title, changed_by, changed_at FROM document_history WHERE doc_id = ? ORDER BY changed_at DESC";
+                String query = "SELECT old_title, old_content, changed_by, changed_at FROM document_history WHERE doc_id = ? ORDER BY changed_at DESC";
                 try (PreparedStatement stmt = conn.prepareStatement(query)) {
                     stmt.setString(1, docId);
                     try (ResultSet rs = stmt.executeQuery()) {
@@ -476,6 +476,7 @@ public class Main {
                             first = false;
                             jsonBuilder.append("{");
                             jsonBuilder.append("\"old_title\":\"").append(rs.getString("old_title").replace("\"", "\\\"")).append("\",");
+                            jsonBuilder.append("\"old_content\":\"").append(rs.getString("old_content").replace("\"", "\\\"").replace("\n", "\\n")).append("\",");
                             jsonBuilder.append("\"changed_by\":\"").append(rs.getString("changed_by")).append("\",");
                             jsonBuilder.append("\"changed_at\":\"").append(rs.getTimestamp("changed_at")).append("\"");
                             jsonBuilder.append("}");
