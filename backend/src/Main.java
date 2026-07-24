@@ -284,8 +284,23 @@ public class Main {
                 else if (method.equals("POST") && path.equals("/api/documents")) {
                     handlePostDocument(t, username);
                 }
+                // Route: GET /api/documents/{id} or /api/documents/{id}/history
+                else if (method.equals("GET") && path.startsWith("/api/documents/")) {
+                    String suffix = path.substring("/api/documents/".length());
+                    if (suffix.endsWith("/history")) {
+                        String id = suffix.substring(0, suffix.length() - "/history".length());
+                        handleGetHistory(t, id);
+                    } else {
+                        handleGetDocument(t, suffix);
+                    }
+                }
+                // Route: PUT /api/documents/{id} (Update specific document)
+                else if (method.equals("PUT") && path.startsWith("/api/documents/")) {
+                    String id = path.substring("/api/documents/".length());
+                    handlePutDocument(t, id, username);
+                }
                 else {
-                    // We will add PUT and /history here later
+                    // We will add /history here later
                     sendJsonResponse(t, 404, "{\"error\": \"Not Found\"}");
                 }
             } catch (Exception e) {
@@ -351,6 +366,125 @@ public class Main {
             }
 
             sendJsonResponse(t, 201, "{\"message\": \"Document created\", \"doc_id\": \"" + docId + "\"}");
+        }
+
+        private void handleGetDocument(HttpExchange t, String docId) throws Exception {
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query = "SELECT * FROM documents WHERE doc_id = ?";
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, docId);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            StringBuilder jsonBuilder = new StringBuilder();
+                            jsonBuilder.append("{");
+                            jsonBuilder.append("\"doc_id\":\"").append(rs.getString("doc_id")).append("\",");
+                            jsonBuilder.append("\"title\":\"").append(rs.getString("title").replace("\"", "\\\"").replace("\n", "\\n")).append("\",");
+                            jsonBuilder.append("\"content\":\"").append(rs.getString("content").replace("\"", "\\\"").replace("\n", "\\n")).append("\",");
+                            jsonBuilder.append("\"last_updated_by\":\"").append(rs.getString("last_updated_by")).append("\",");
+                            jsonBuilder.append("\"last_updated_at\":\"").append(rs.getTimestamp("last_updated_at")).append("\"");
+                            jsonBuilder.append("}");
+                            sendJsonResponse(t, 200, jsonBuilder.toString());
+                        } else {
+                            sendJsonResponse(t, 404, "{\"error\": \"Document not found\"}");
+                        }
+                    }
+                }
+            }
+        }
+
+        private void handlePutDocument(HttpExchange t, String docId, String username) throws Exception {
+            InputStream is = t.getRequestBody();
+            String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode jsonNode = mapper.readTree(body);
+            String newTitle = jsonNode.has("title") ? jsonNode.get("title").asText() : "";
+            String newContent = jsonNode.has("content") ? jsonNode.get("content").asText() : "";
+            
+            if (newTitle.trim().isEmpty() || newContent.trim().isEmpty()) {
+                sendJsonResponse(t, 400, "{\"error\": \"Title and content are required\"}");
+                return;
+            }
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                conn.setAutoCommit(false); // Start transaction for audit trail
+                try {
+                    // 1. Fetch current version and lock row
+                    String selectSql = "SELECT title, content FROM documents WHERE doc_id = ? FOR UPDATE";
+                    String oldTitle = null;
+                    String oldContent = null;
+                    try (PreparedStatement selectStmt = conn.prepareStatement(selectSql)) {
+                        selectStmt.setString(1, docId);
+                        try (ResultSet rs = selectStmt.executeQuery()) {
+                            if (rs.next()) {
+                                oldTitle = rs.getString("title");
+                                oldContent = rs.getString("content");
+                            } else {
+                                conn.rollback();
+                                sendJsonResponse(t, 404, "{\"error\": \"Document not found\"}");
+                                return;
+                            }
+                        }
+                    }
+
+                    // 2. Save old version to history
+                    String insertHistorySql = "INSERT INTO document_history (doc_id, old_title, old_content, changed_by) VALUES (?, ?, ?, ?)";
+                    try (PreparedStatement historyStmt = conn.prepareStatement(insertHistorySql)) {
+                        historyStmt.setString(1, docId);
+                        historyStmt.setString(2, oldTitle);
+                        historyStmt.setString(3, oldContent);
+                        historyStmt.setString(4, username);
+                        historyStmt.executeUpdate();
+                    }
+
+                    // 3. Update the document
+                    String updateDocSql = "UPDATE documents SET title = ?, content = ?, last_updated_by = ? WHERE doc_id = ?";
+                    try (PreparedStatement updateStmt = conn.prepareStatement(updateDocSql)) {
+                        updateStmt.setString(1, newTitle);
+                        updateStmt.setString(2, newContent);
+                        updateStmt.setString(3, username);
+                        updateStmt.setString(4, docId);
+                        updateStmt.executeUpdate();
+                    }
+
+                    conn.commit(); // Commit transaction
+                    sendJsonResponse(t, 200, "{\"message\": \"Document updated successfully\"}");
+
+                } catch (Exception e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(true);
+                }
+            }
+        }
+
+        private void handleGetHistory(HttpExchange t, String docId) throws Exception {
+            StringBuilder jsonBuilder = new StringBuilder();
+            jsonBuilder.append("[");
+            
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query = "SELECT old_title, changed_by, changed_at FROM document_history WHERE doc_id = ? ORDER BY changed_at DESC";
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, docId);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        boolean first = true;
+                        while (rs.next()) {
+                            if (!first) {
+                                jsonBuilder.append(",");
+                            }
+                            first = false;
+                            jsonBuilder.append("{");
+                            jsonBuilder.append("\"old_title\":\"").append(rs.getString("old_title").replace("\"", "\\\"")).append("\",");
+                            jsonBuilder.append("\"changed_by\":\"").append(rs.getString("changed_by")).append("\",");
+                            jsonBuilder.append("\"changed_at\":\"").append(rs.getTimestamp("changed_at")).append("\"");
+                            jsonBuilder.append("}");
+                        }
+                    }
+                }
+            }
+            jsonBuilder.append("]");
+            sendJsonResponse(t, 200, jsonBuilder.toString());
         }
     }
 }

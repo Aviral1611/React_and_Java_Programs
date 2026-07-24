@@ -125,7 +125,7 @@ function Dashboard() {
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem' }}>
                    <button 
-                    onClick={() => alert(`Will open history for ${doc.doc_id}`)}
+                    onClick={() => navigate(`/history/${doc.doc_id}`)}
                     style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '0.5rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s ease' }}
                     title="View History"
                   >
