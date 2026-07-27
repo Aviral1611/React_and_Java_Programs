@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Clock } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import './index.css';
 
 function DocumentHistory() {
@@ -97,7 +98,7 @@ function DocumentHistory() {
                     </span>
                   </div>
                   
-                  {/* Display the old content that was missing */}
+                  {/* Display the old content formatted as Markdown */}
                   <div style={{ 
                     background: 'rgba(0, 0, 0, 0.2)', 
                     padding: '1rem', 
@@ -105,9 +106,8 @@ function DocumentHistory() {
                     marginBottom: '1rem',
                     fontSize: '0.95rem',
                     color: 'var(--text-main)',
-                    whiteSpace: 'pre-wrap'
-                  }}>
-                    {entry.old_content}
+                  }} className="markdown-preview">
+                    <ReactMarkdown>{entry.old_content}</ReactMarkdown>
                   </div>
 
                   <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>

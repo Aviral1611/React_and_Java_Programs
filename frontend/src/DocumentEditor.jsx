@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Loader2 } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, Edit3, Eye } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import './index.css';
 
 function DocumentEditor() {
@@ -114,36 +115,62 @@ function DocumentEditor() {
       )}
 
       {/* Editor Area */}
-      <div className="glass-panel" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        <div>
-          <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>Document Title</label>
-          <input 
-            type="text" 
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g., Q3 Financial Report"
-            style={{ 
-              width: '100%', padding: '0.75rem', 
-              background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', 
-              borderRadius: '8px', color: 'white', fontSize: '1.25rem', fontWeight: '500' 
-            }}
-          />
-        </div>
+      <div style={{ display: 'flex', gap: '1.5rem', height: '600px' }}>
         
-        <div style={{ flexGrow: 1 }}>
-          <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>Content</label>
+        {/* Left: Input */}
+        <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+             <Edit3 size={18} />
+             <span style={{ fontSize: '0.9rem', fontWeight: '500' }}>Markdown Editor</span>
+          </div>
+          
+          <div>
+            <input 
+              type="text" 
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Document Title"
+              style={{ 
+                width: '100%', padding: '0.75rem', 
+                background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', 
+                borderRadius: '8px', color: 'white', fontSize: '1.25rem', fontWeight: '500' 
+              }}
+            />
+          </div>
+          
           <textarea 
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Start typing your document content here..."
+            placeholder="Use Markdown to format your text (e.g. # Heading, **bold**)..."
             style={{ 
-              width: '100%', minHeight: '400px', padding: '1rem', 
+              width: '100%', flexGrow: 1, padding: '1rem', 
               background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', 
-              borderRadius: '8px', color: 'white', fontSize: '1rem', fontFamily: 'inherit',
-              resize: 'vertical', lineHeight: '1.5'
+              borderRadius: '8px', color: 'white', fontSize: '1rem', fontFamily: 'monospace',
+              resize: 'none', lineHeight: '1.5'
             }}
           />
         </div>
+
+        {/* Right: Live Preview */}
+        <div className="glass-panel" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1rem' }}>
+             <Eye size={18} />
+             <span style={{ fontSize: '0.9rem', fontWeight: '500' }}>Live Preview</span>
+          </div>
+
+          <div style={{ padding: '0 0.5rem' }} className="markdown-preview">
+            <h1 style={{ fontSize: '2rem', marginBottom: '1rem', color: 'var(--text-main)' }}>
+              {title || <span style={{ color: 'var(--text-muted)' }}>Untitled Document</span>}
+            </h1>
+            
+            {content ? (
+              <ReactMarkdown>{content}</ReactMarkdown>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Start typing on the left to see the preview here...</p>
+            )}
+          </div>
+        </div>
+
       </div>
     </div>
   );
