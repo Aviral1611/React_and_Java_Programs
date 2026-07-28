@@ -7,6 +7,9 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileInputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -28,6 +31,7 @@ public class Main {
     private static String DB_PASSWORD;
     private static String JWT_SECRET;
     private static long JWT_EXPIRATION;
+    private static final String UPLOAD_DIR = System.getProperty("user.dir") + File.separator + "uploads";
 
     public static void main(String[] args) throws Exception {
         loadProperties();
@@ -280,16 +284,23 @@ public class Main {
                 if (method.equals("GET") && path.equals("/api/documents")) {
                     handleGetDocuments(t);
                 } 
-                // Route: POST /api/documents (Create new document)
+                // Route: POST /api/documents (Create new text document)
                 else if (method.equals("POST") && path.equals("/api/documents")) {
                     handlePostDocument(t, username);
                 }
-                // Route: GET /api/documents/{id} or /api/documents/{id}/history
+                // Route: POST /api/documents/upload (Upload PDF)
+                else if (method.equals("POST") && path.equals("/api/documents/upload")) {
+                    handleUploadPdf(t, username);
+                }
+                // Route: GET /api/documents/{id} or /api/documents/{id}/history or /api/documents/{id}/download
                 else if (method.equals("GET") && path.startsWith("/api/documents/")) {
                     String suffix = path.substring("/api/documents/".length());
                     if (suffix.endsWith("/history")) {
                         String id = suffix.substring(0, suffix.length() - "/history".length());
                         handleGetHistory(t, id);
+                    } else if (suffix.endsWith("/download")) {
+                        String id = suffix.substring(0, suffix.length() - "/download".length());
+                        handleDownloadPdf(t, id);
                     } else {
                         handleGetDocument(t, suffix);
                     }
@@ -300,7 +311,6 @@ public class Main {
                     handlePutDocument(t, id, username);
                 }
                 else {
-                    // We will add /history here later
                     sendJsonResponse(t, 404, "{\"error\": \"Not Found\"}");
                 }
             } catch (Exception e) {
@@ -314,7 +324,7 @@ public class Main {
             jsonBuilder.append("[");
             
             try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                String query = "SELECT doc_id, title, last_updated_by, last_updated_at FROM documents ORDER BY last_updated_at DESC";
+                String query = "SELECT doc_id, title, doc_type, last_updated_by, last_updated_at FROM documents ORDER BY last_updated_at DESC";
                 try (PreparedStatement stmt = conn.prepareStatement(query);
                      ResultSet rs = stmt.executeQuery()) {
                     
@@ -324,9 +334,12 @@ public class Main {
                             jsonBuilder.append(",");
                         }
                         first = false;
+                        String docType = rs.getString("doc_type");
+                        if (docType == null) docType = "text";
                         jsonBuilder.append("{");
                         jsonBuilder.append("\"doc_id\":\"").append(rs.getString("doc_id")).append("\",");
                         jsonBuilder.append("\"title\":\"").append(rs.getString("title").replace("\"", "\\\"")).append("\",");
+                        jsonBuilder.append("\"doc_type\":\"").append(docType).append("\",");
                         jsonBuilder.append("\"last_updated_by\":\"").append(rs.getString("last_updated_by")).append("\",");
                         jsonBuilder.append("\"last_updated_at\":\"").append(rs.getTimestamp("last_updated_at")).append("\"");
                         jsonBuilder.append("}");
@@ -486,6 +499,97 @@ public class Main {
             }
             jsonBuilder.append("]");
             sendJsonResponse(t, 200, jsonBuilder.toString());
+        }
+
+        private void handleUploadPdf(HttpExchange t, String username) throws Exception {
+            InputStream is = t.getRequestBody();
+            String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode jsonNode = mapper.readTree(body);
+            String filename = jsonNode.has("filename") ? jsonNode.get("filename").asText() : "";
+            String fileData = jsonNode.has("fileData") ? jsonNode.get("fileData").asText() : "";
+            
+            if (filename.trim().isEmpty() || fileData.trim().isEmpty()) {
+                sendJsonResponse(t, 400, "{\"error\": \"Filename and file data are required\"}");
+                return;
+            }
+
+            // Create uploads directory if it doesn't exist
+            File uploadDir = new File(UPLOAD_DIR);
+            if (!uploadDir.exists()) {
+                uploadDir.mkdirs();
+            }
+
+            String docId = UUID.randomUUID().toString();
+            String savedFilename = docId + ".pdf";
+            File outputFile = new File(uploadDir, savedFilename);
+
+            // Decode Base64 and save to filesystem
+            byte[] fileBytes = Base64.getDecoder().decode(fileData);
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                fos.write(fileBytes);
+            }
+            System.out.println("[Upload] Saved PDF: " + outputFile.getAbsolutePath() + " (" + fileBytes.length + " bytes)");
+
+            // Save metadata to database
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String sql = "INSERT INTO documents (doc_id, title, content, doc_type, file_path, last_updated_by) VALUES (?, ?, ?, ?, ?, ?)";
+                try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    pstmt.setString(1, docId);
+                    pstmt.setString(2, filename);
+                    pstmt.setString(3, "PDF Document");
+                    pstmt.setString(4, "pdf");
+                    pstmt.setString(5, outputFile.getAbsolutePath());
+                    pstmt.setString(6, username);
+                    pstmt.executeUpdate();
+                }
+            }
+
+            sendJsonResponse(t, 201, "{\"message\": \"PDF uploaded successfully\", \"doc_id\": \"" + docId + "\"}");
+        }
+
+        private void handleDownloadPdf(HttpExchange t, String docId) throws Exception {
+            String filePath = null;
+            String title = null;
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query = "SELECT title, file_path FROM documents WHERE doc_id = ? AND doc_type = 'pdf'";
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, docId);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            title = rs.getString("title");
+                            filePath = rs.getString("file_path");
+                        } else {
+                            sendJsonResponse(t, 404, "{\"error\": \"PDF not found\"}");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            File file = new File(filePath);
+            if (!file.exists()) {
+                sendJsonResponse(t, 404, "{\"error\": \"File not found on disk\"}");
+                return;
+            }
+
+            // Send the PDF file as binary response
+            t.getResponseHeaders().set("Content-Type", "application/pdf");
+            t.getResponseHeaders().set("Content-Disposition", "inline; filename=\"" + title + "\"");
+            t.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+            t.sendResponseHeaders(200, file.length());
+
+            try (FileInputStream fis = new FileInputStream(file);
+                 OutputStream os = t.getResponseBody()) {
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    os.write(buffer, 0, bytesRead);
+                }
+                os.flush();
+            }
         }
     }
 }

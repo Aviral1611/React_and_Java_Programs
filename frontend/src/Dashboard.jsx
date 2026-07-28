@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, FileText, Plus, Clock, Edit } from 'lucide-react';
+import { LogOut, FileText, Plus, Clock, Edit, Upload, Download, File } from 'lucide-react';
 import './index.css';
 
 function Dashboard() {
@@ -8,7 +8,31 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [username, setUsername] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
+
+  const fetchDocuments = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch('http://localhost:8080/api/documents', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDocuments(data);
+      } else if (response.status === 401) {
+        localStorage.removeItem('token');
+        navigate('/login');
+      } else {
+        setError('Failed to fetch documents');
+      }
+    } catch (err) {
+      setError('Error connecting to the backend server.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -17,7 +41,6 @@ function Dashboard() {
       return;
     }
 
-    // Decode token to get username (simple payload extraction, not verification)
     try {
       const payload = JSON.parse(atob(token.split('.')[1]));
       setUsername(payload.sub);
@@ -25,33 +48,72 @@ function Dashboard() {
       console.error('Could not decode token payload');
     }
 
-    const fetchDocuments = async () => {
-      try {
-        const response = await fetch('http://localhost:8080/api/documents', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setDocuments(data);
-        } else if (response.status === 401) {
-          localStorage.removeItem('token');
-          navigate('/login');
-        } else {
-          setError('Failed to fetch documents');
-        }
-      } catch (err) {
-        setError('Error connecting to the backend server.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
     fetchDocuments();
   }, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     navigate('/login');
+  };
+
+  const handlePdfUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Please select a PDF file.');
+      return;
+    }
+
+    setUploading(true);
+    setError('');
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result.split(',')[1];
+      const token = localStorage.getItem('token');
+
+      try {
+        const response = await fetch('http://localhost:8080/api/documents/upload', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ filename: file.name, fileData: base64 })
+        });
+
+        if (response.ok) {
+          fetchDocuments();
+        } else {
+          const data = await response.json();
+          setError(data.error || 'Failed to upload PDF.');
+        }
+      } catch (err) {
+        setError('Error uploading PDF to server.');
+      } finally {
+        setUploading(false);
+        fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDownloadPdf = (docId, title) => {
+    const token = localStorage.getItem('token');
+    fetch(`http://localhost:8080/api/documents/${docId}/download`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    .then(res => res.blob())
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = title;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    })
+    .catch(() => setError('Failed to download PDF.'));
   };
 
   if (loading) {
@@ -82,13 +144,36 @@ function Dashboard() {
       <div className="glass-panel" style={{ padding: '2rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '600' }}>Your Documents</h2>
-          <button 
-            onClick={() => navigate('/editor/new')}
-            className="btn-primary" 
-            style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}
-          >
-            <Plus size={18} /> New Document
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            {/* Upload PDF Button */}
+            <input 
+              type="file" 
+              accept=".pdf" 
+              ref={fileInputRef} 
+              onChange={handlePdfUpload} 
+              style={{ display: 'none' }} 
+            />
+            <button 
+              onClick={() => fileInputRef.current.click()}
+              disabled={uploading}
+              style={{ 
+                width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem',
+                background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)', 
+                color: 'var(--accent)', borderRadius: '8px', cursor: 'pointer', fontWeight: '500',
+                opacity: uploading ? 0.6 : 1
+              }}
+            >
+              <Upload size={18} /> {uploading ? 'Uploading...' : 'Upload PDF'}
+            </button>
+            {/* New Text Document Button */}
+            <button 
+              onClick={() => navigate('/editor/new')}
+              className="btn-primary" 
+              style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}
+            >
+              <Plus size={18} /> New Document
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -101,45 +186,71 @@ function Dashboard() {
           {documents.length === 0 ? (
             <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 0' }}>No documents found. Create one to get started!</p>
           ) : (
-            documents.map(doc => (
-              <div key={doc.doc_id} style={{ 
-                background: 'rgba(255, 255, 255, 0.03)', 
-                border: '1px solid rgba(255, 255, 255, 0.05)',
-                borderRadius: '8px',
-                padding: '1.25rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                transition: 'all 0.2s ease',
-              }} className="document-card">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <div style={{ padding: '0.75rem', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '8px', color: 'var(--primary)' }}>
-                    <FileText size={24} />
+            documents.map(doc => {
+              const isPdf = doc.doc_type === 'pdf';
+              return (
+                <div key={doc.doc_id} style={{ 
+                  background: 'rgba(255, 255, 255, 0.03)', 
+                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                  borderRadius: '8px',
+                  padding: '1.25rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  transition: 'all 0.2s ease',
+                }} className="document-card">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <div style={{ 
+                      padding: '0.75rem', 
+                      background: isPdf ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.1)', 
+                      borderRadius: '8px', 
+                      color: isPdf ? '#ef4444' : 'var(--primary)' 
+                    }}>
+                      {isPdf ? <File size={24} /> : <FileText size={24} />}
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                        <h3 style={{ fontSize: '1.1rem', fontWeight: '500' }}>{doc.title}</h3>
+                        {isPdf && (
+                          <span style={{ fontSize: '0.7rem', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: '600' }}>
+                            PDF
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        Last updated by <span style={{ color: 'var(--text-main)' }}>{doc.last_updated_by}</span> on {new Date(doc.last_updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: '500', marginBottom: '0.25rem' }}>{doc.title}</h3>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                      Last updated by <span style={{ color: 'var(--text-main)' }}>{doc.last_updated_by}</span> on {new Date(doc.last_updated_at).toLocaleDateString()}
-                    </p>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    {isPdf ? (
+                      <button 
+                        onClick={() => handleDownloadPdf(doc.doc_id, doc.title)}
+                        style={{ background: 'rgba(59, 130, 246, 0.1)', border: 'none', color: 'var(--primary)', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
+                      >
+                        <Download size={18} /> Download
+                      </button>
+                    ) : (
+                      <>
+                        <button 
+                          onClick={() => navigate(`/history/${doc.doc_id}`)}
+                          style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '0.5rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s ease' }}
+                          title="View History"
+                        >
+                          <Clock size={18} />
+                        </button>
+                        <button 
+                          onClick={() => navigate(`/editor/${doc.doc_id}`)}
+                          style={{ background: 'rgba(59, 130, 246, 0.1)', border: 'none', color: 'var(--primary)', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
+                        >
+                          <Edit size={18} /> Edit
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.75rem' }}>
-                   <button 
-                    onClick={() => navigate(`/history/${doc.doc_id}`)}
-                    style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '0.5rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s ease' }}
-                    title="View History"
-                  >
-                    <Clock size={18} />
-                  </button>
-                  <button 
-                    onClick={() => navigate(`/editor/${doc.doc_id}`)}
-                    style={{ background: 'rgba(59, 130, 246, 0.1)', border: 'none', color: 'var(--primary)', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
-                  >
-                    <Edit size={18} /> Edit
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
