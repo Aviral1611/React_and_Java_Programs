@@ -29,6 +29,7 @@ function PdfAnnotator() {
   const canvasContainerRef = useRef(null);
   const pageCanvasRefs = useRef({});
   const overlayRefs = useRef({});
+  const renderTasks = useRef({});
 
   // Load the PDF
   useEffect(() => {
@@ -72,7 +73,19 @@ function PdfAnnotator() {
         canvas.height = viewport.height;
 
         const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        
+        if (renderTasks.current[pageNum]) {
+          renderTasks.current[pageNum].cancel();
+        }
+        
+        const renderTask = page.render({ canvasContext: ctx, viewport });
+        renderTasks.current[pageNum] = renderTask;
+        
+        try {
+          await renderTask.promise;
+        } catch (err) {
+          // Ignore cancelled renders
+        }
 
         // Size the overlay to match
         const overlay = overlayRefs.current[pageNum];

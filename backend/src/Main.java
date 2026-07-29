@@ -688,7 +688,6 @@ public class Main {
                         comment.setRectangle(new PDRectangle(x, pdfY - 20, 20, 20));
                         comment.setName(PDAnnotationText.NAME_COMMENT);
                         comment.setTitlePopup(username);
-                        comment.constructAppearances(document);
                         page.getAnnotations().add(comment);
 
                     } else if ("highlight".equals(type)) {
@@ -706,7 +705,6 @@ public class Main {
                         highlight.setColor(new PDColor(new float[]{1, 1, 0}, PDDeviceRGB.INSTANCE));
                         highlight.setConstantOpacity(0.3f);
                         highlight.setContents("Highlight");
-                        highlight.constructAppearances(document);
                         page.getAnnotations().add(highlight);
                     }
                 }
