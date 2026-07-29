@@ -697,7 +697,8 @@ public class Main {
                         // Convert from top-left origin (browser) to bottom-left origin (PDF)
                         float pdfY = pageHeight - y - height;
 
-                        PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup("Highlight");
+                        PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup();
+                        highlight.setSubtype("Highlight");
                         PDRectangle rect = new PDRectangle(x, pdfY, width, height);
                         highlight.setRectangle(rect);
 
