@@ -27,6 +27,7 @@ import javax.crypto.spec.SecretKeySpec;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
@@ -659,7 +660,7 @@ public class Main {
             }
 
             // 5. Use PDFBox to add annotations to the PDF
-            try (PDDocument document = PDDocument.load(currentFile)) {
+            try (PDDocument document = Loader.loadPDF(currentFile)) {
                 for (JsonNode ann : annotations) {
                     String type = ann.get("type").asText();
                     int pageNum = ann.get("page").asInt() - 1; // 0-indexed in PDFBox
@@ -696,7 +697,7 @@ public class Main {
                         // Convert from top-left origin (browser) to bottom-left origin (PDF)
                         float pdfY = pageHeight - y - height;
 
-                        PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
+                        PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup("Highlight");
                         PDRectangle rect = new PDRectangle(x, pdfY, width, height);
                         highlight.setRectangle(rect);
 
