@@ -578,7 +578,6 @@ public class Main {
             // Send the PDF file as binary response
             t.getResponseHeaders().set("Content-Type", "application/pdf");
             t.getResponseHeaders().set("Content-Disposition", "inline; filename=\"" + title + "\"");
-            t.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
             t.sendResponseHeaders(200, file.length());
 
             try (FileInputStream fis = new FileInputStream(file);
