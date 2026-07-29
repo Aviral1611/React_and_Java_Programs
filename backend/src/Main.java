@@ -10,6 +10,8 @@ import java.io.OutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileInputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -24,6 +26,12 @@ import javax.crypto.spec.SecretKeySpec;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup;
 
 public class Main {
     private static String DB_URL;
@@ -310,6 +318,11 @@ public class Main {
                     String id = path.substring("/api/documents/".length());
                     handlePutDocument(t, id, username);
                 }
+                // Route: POST /api/documents/{id}/annotate (Annotate PDF)
+                else if (method.equals("POST") && path.startsWith("/api/documents/") && path.endsWith("/annotate")) {
+                    String id = path.substring("/api/documents/".length(), path.length() - "/annotate".length());
+                    handleAnnotatePdf(t, id, username);
+                }
                 else {
                     sendJsonResponse(t, 404, "{\"error\": \"Not Found\"}");
                 }
@@ -589,6 +602,133 @@ public class Main {
                 }
                 os.flush();
             }
+        }
+
+        private void handleAnnotatePdf(HttpExchange t, String docId, String username) throws Exception {
+            // 1. Read annotation data from request
+            InputStream is = t.getRequestBody();
+            String body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode jsonNode = mapper.readTree(body);
+            JsonNode annotations = jsonNode.get("annotations");
+
+            if (annotations == null || !annotations.isArray() || annotations.size() == 0) {
+                sendJsonResponse(t, 400, "{\"error\": \"No annotations provided\"}");
+                return;
+            }
+
+            // 2. Get the current PDF file path from DB
+            String filePath = null;
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query = "SELECT file_path FROM documents WHERE doc_id = ? AND doc_type = 'pdf'";
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, docId);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            filePath = rs.getString("file_path");
+                        } else {
+                            sendJsonResponse(t, 404, "{\"error\": \"PDF document not found\"}");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            File currentFile = new File(filePath);
+            if (!currentFile.exists()) {
+                sendJsonResponse(t, 404, "{\"error\": \"PDF file not found on disk\"}");
+                return;
+            }
+
+            // 3. Copy current PDF to history backup
+            String backupName = docId + "_" + System.currentTimeMillis() + ".pdf";
+            File backupFile = new File(UPLOAD_DIR, backupName);
+            Files.copy(currentFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            System.out.println("[Annotate] Backed up old PDF to: " + backupFile.getAbsolutePath());
+
+            // 4. Save old version to document_history
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String insertHistory = "INSERT INTO document_history (doc_id, old_title, old_content, changed_by) VALUES (?, ?, ?, ?)";
+                try (PreparedStatement pstmt = conn.prepareStatement(insertHistory)) {
+                    pstmt.setString(1, docId);
+                    pstmt.setString(2, "Pre-annotation version");
+                    pstmt.setString(3, backupFile.getAbsolutePath());
+                    pstmt.setString(4, username);
+                    pstmt.executeUpdate();
+                }
+            }
+
+            // 5. Use PDFBox to add annotations to the PDF
+            try (PDDocument document = PDDocument.load(currentFile)) {
+                for (JsonNode ann : annotations) {
+                    String type = ann.get("type").asText();
+                    int pageNum = ann.get("page").asInt() - 1; // 0-indexed in PDFBox
+
+                    if (pageNum < 0 || pageNum >= document.getNumberOfPages()) {
+                        continue; // Skip invalid page numbers
+                    }
+
+                    PDPage page = document.getPage(pageNum);
+                    PDRectangle mediaBox = page.getMediaBox();
+                    float pageHeight = mediaBox.getHeight();
+
+                    if ("comment".equals(type)) {
+                        float x = (float) ann.get("x").asDouble();
+                        float y = (float) ann.get("y").asDouble();
+                        String text = ann.get("text").asText();
+
+                        // Convert from top-left origin (browser) to bottom-left origin (PDF)
+                        float pdfY = pageHeight - y;
+
+                        PDAnnotationText comment = new PDAnnotationText();
+                        comment.setContents(text);
+                        comment.setRectangle(new PDRectangle(x, pdfY - 20, 20, 20));
+                        comment.setName(PDAnnotationText.NAME_COMMENT);
+                        comment.setTitlePopup(username);
+                        page.getAnnotations().add(comment);
+
+                    } else if ("highlight".equals(type)) {
+                        float x = (float) ann.get("x").asDouble();
+                        float y = (float) ann.get("y").asDouble();
+                        float width = (float) ann.get("width").asDouble();
+                        float height = (float) ann.get("height").asDouble();
+
+                        // Convert from top-left origin (browser) to bottom-left origin (PDF)
+                        float pdfY = pageHeight - y - height;
+
+                        PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
+                        PDRectangle rect = new PDRectangle(x, pdfY, width, height);
+                        highlight.setRectangle(rect);
+
+                        // QuadPoints define the exact highlight shape (required for proper rendering)
+                        float[] quadPoints = {
+                            rect.getLowerLeftX(), rect.getUpperRightY(),
+                            rect.getUpperRightX(), rect.getUpperRightY(),
+                            rect.getLowerLeftX(), rect.getLowerLeftY(),
+                            rect.getUpperRightX(), rect.getLowerLeftY()
+                        };
+                        highlight.setQuadPoints(quadPoints);
+                        highlight.setConstantOpacity(0.3f);
+                        page.getAnnotations().add(highlight);
+                    }
+                }
+
+                // 6. Save the annotated PDF (overwrite original)
+                document.save(currentFile);
+                System.out.println("[Annotate] Saved annotated PDF: " + currentFile.getAbsolutePath());
+            }
+
+            // 7. Update timestamp in database
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String updateSql = "UPDATE documents SET last_updated_by = ?, last_updated_at = CURRENT_TIMESTAMP WHERE doc_id = ?";
+                try (PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
+                    pstmt.setString(1, username);
+                    pstmt.setString(2, docId);
+                    pstmt.executeUpdate();
+                }
+            }
+
+            sendJsonResponse(t, 200, "{\"message\": \"PDF annotated successfully\"}");
         }
     }
 }

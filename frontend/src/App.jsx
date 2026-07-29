@@ -3,6 +3,7 @@ import Login from './Login';
 import Dashboard from './Dashboard';
 import DocumentEditor from './DocumentEditor';
 import DocumentHistory from './DocumentHistory';
+import PdfAnnotator from './PdfAnnotator';
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/editor/:id" element={<DocumentEditor />} />
         <Route path="/history/:id" element={<DocumentHistory />} />
+        <Route path="/annotate/:id" element={<PdfAnnotator />} />
       </Routes>
     </BrowserRouter>
   );

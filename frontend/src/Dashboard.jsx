@@ -224,12 +224,27 @@ function Dashboard() {
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem' }}>
                     {isPdf ? (
-                      <button 
-                        onClick={() => handleDownloadPdf(doc.doc_id, doc.title)}
-                        style={{ background: 'rgba(59, 130, 246, 0.1)', border: 'none', color: 'var(--primary)', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
-                      >
-                        <Download size={18} /> Download
-                      </button>
+                      <>
+                        <button 
+                          onClick={() => navigate(`/history/${doc.doc_id}`)}
+                          style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', padding: '0.5rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s ease' }}
+                          title="View History"
+                        >
+                          <Clock size={18} />
+                        </button>
+                        <button 
+                          onClick={() => navigate(`/annotate/${doc.doc_id}`)}
+                          style={{ background: 'rgba(246, 173, 59, 0.1)', border: 'none', color: '#f6ad3b', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
+                        >
+                          <Edit size={18} /> Annotate
+                        </button>
+                        <button 
+                          onClick={() => handleDownloadPdf(doc.doc_id, doc.title)}
+                          style={{ background: 'rgba(59, 130, 246, 0.1)', border: 'none', color: 'var(--primary)', padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '500', transition: 'all 0.2s ease' }}
+                        >
+                          <Download size={18} /> Download
+                        </button>
+                      </>
                     ) : (
                       <>
                         <button 
