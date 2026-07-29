@@ -709,13 +709,14 @@ public class Main {
                     }
                 }
 
-                // 6. Save the annotated PDF to a temp file, then replace original
-                File tempFile = new File(currentFile.getAbsolutePath() + ".tmp");
-                document.save(tempFile);
-                document.close(); // Close document to release lock on currentFile
-                Files.move(tempFile.toPath(), currentFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                System.out.println("[Annotate] Saved annotated PDF: " + currentFile.getAbsolutePath());
-            }
+                // 6. Save the annotated PDF to a temp file
+                document.save(currentFile.getAbsolutePath() + ".tmp");
+            } // document is automatically closed here, releasing the file lock
+
+            // Now safely replace the original file
+            File tempFile = new File(currentFile.getAbsolutePath() + ".tmp");
+            Files.move(tempFile.toPath(), currentFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            System.out.println("[Annotate] Saved annotated PDF: " + currentFile.getAbsolutePath());
 
             // 7. Update timestamp in database
             try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
