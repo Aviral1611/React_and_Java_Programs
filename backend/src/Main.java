@@ -32,7 +32,9 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
-import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationSquare;
+import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
+import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 
 public class Main {
     private static String DB_URL;
@@ -697,20 +699,12 @@ public class Main {
                         // Convert from top-left origin (browser) to bottom-left origin (PDF)
                         float pdfY = pageHeight - y - height;
 
-                        PDAnnotationTextMarkup highlight = new PDAnnotationTextMarkup();
-                        highlight.setSubtype("Highlight");
+                        PDAnnotationSquare highlight = new PDAnnotationSquare();
                         PDRectangle rect = new PDRectangle(x, pdfY, width, height);
                         highlight.setRectangle(rect);
-
-                        // QuadPoints define the exact highlight shape (required for proper rendering)
-                        float[] quadPoints = {
-                            rect.getLowerLeftX(), rect.getUpperRightY(),
-                            rect.getUpperRightX(), rect.getUpperRightY(),
-                            rect.getLowerLeftX(), rect.getLowerLeftY(),
-                            rect.getUpperRightX(), rect.getLowerLeftY()
-                        };
-                        highlight.setQuadPoints(quadPoints);
+                        highlight.setColor(new PDColor(new float[]{1, 1, 0}, PDDeviceRGB.INSTANCE));
                         highlight.setConstantOpacity(0.3f);
+                        highlight.setContents("Highlight");
                         page.getAnnotations().add(highlight);
                     }
                 }
