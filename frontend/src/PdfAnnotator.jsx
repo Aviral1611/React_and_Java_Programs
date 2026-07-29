@@ -273,7 +273,8 @@ function PdfAnnotator() {
               onMouseUp={(e) => handleOverlayMouseUp(e, pageNum)}
               style={{ 
                 position: 'absolute', top: 0, left: 0, 
-                cursor: mode === 'comment' ? 'crosshair' : mode === 'highlight' ? 'crosshair' : 'default'
+                cursor: mode === 'comment' ? 'crosshair' : mode === 'highlight' ? 'crosshair' : 'default',
+                pointerEvents: mode === 'select' ? 'none' : 'auto'
               }}
             >
               {/* Render annotation markers for this page */}

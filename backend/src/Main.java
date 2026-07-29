@@ -688,6 +688,7 @@ public class Main {
                         comment.setRectangle(new PDRectangle(x, pdfY - 20, 20, 20));
                         comment.setName(PDAnnotationText.NAME_COMMENT);
                         comment.setTitlePopup(username);
+                        comment.constructAppearances(document);
                         page.getAnnotations().add(comment);
 
                     } else if ("highlight".equals(type)) {
@@ -705,12 +706,16 @@ public class Main {
                         highlight.setColor(new PDColor(new float[]{1, 1, 0}, PDDeviceRGB.INSTANCE));
                         highlight.setConstantOpacity(0.3f);
                         highlight.setContents("Highlight");
+                        highlight.constructAppearances(document);
                         page.getAnnotations().add(highlight);
                     }
                 }
 
-                // 6. Save the annotated PDF (overwrite original)
-                document.save(currentFile);
+                // 6. Save the annotated PDF to a temp file, then replace original
+                File tempFile = new File(currentFile.getAbsolutePath() + ".tmp");
+                document.save(tempFile);
+                document.close(); // Close document to release lock on currentFile
+                Files.move(tempFile.toPath(), currentFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 System.out.println("[Annotate] Saved annotated PDF: " + currentFile.getAbsolutePath());
             }
 
