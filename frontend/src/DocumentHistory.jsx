@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Clock } from 'lucide-react';
+import { ArrowLeft, Clock, Download, File } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './index.css';
 
@@ -10,6 +10,33 @@ function DocumentHistory() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const downloadPdfVersion = async (historyId, title) => {
+    const token = localStorage.getItem('token');
+    setError('');
+    try {
+      const response = await fetch(
+        `http://localhost:8080/api/documents/${id}/history/${historyId}/download`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (!response.ok) {
+        const data = await response.json();
+        setError(data.error || 'Failed to download this PDF version.');
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const baseName = title || 'previous-version';
+      link.download = baseName.toLowerCase().endsWith('.pdf') ? baseName : `${baseName}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setError('Error connecting to the server.');
+    }
+  };
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -98,17 +125,50 @@ function DocumentHistory() {
                     </span>
                   </div>
                   
-                  {/* Display the old content formatted as Markdown */}
-                  <div style={{ 
-                    background: 'rgba(0, 0, 0, 0.2)', 
-                    padding: '1rem', 
-                    borderRadius: '6px', 
-                    marginBottom: '1rem',
-                    fontSize: '0.95rem',
-                    color: 'var(--text-main)',
-                  }} className="markdown-preview">
-                    <ReactMarkdown>{entry.old_content}</ReactMarkdown>
-                  </div>
+                  {entry.doc_type === 'pdf' ? (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '1rem',
+                      background: 'rgba(0, 0, 0, 0.2)',
+                      padding: '1rem',
+                      borderRadius: '6px',
+                      marginBottom: '1rem'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-muted)' }}>
+                        <File size={20} color="#ef4444" />
+                        <span>PDF version saved before annotations were applied</span>
+                      </div>
+                      <button
+                        onClick={() => downloadPdfVersion(entry.history_id, entry.old_title)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.4rem',
+                          padding: '0.5rem 0.75rem',
+                          background: 'rgba(59, 130, 246, 0.1)',
+                          border: '1px solid rgba(59, 130, 246, 0.25)',
+                          borderRadius: '6px',
+                          color: 'var(--primary)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <Download size={16} /> Download
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.2)',
+                      padding: '1rem',
+                      borderRadius: '6px',
+                      marginBottom: '1rem',
+                      fontSize: '0.95rem',
+                      color: 'var(--text-main)',
+                    }} className="markdown-preview">
+                      <ReactMarkdown>{entry.old_content}</ReactMarkdown>
+                    </div>
+                  )}
 
                   <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>
                     Saved by <span style={{ color: 'var(--text-main)', fontWeight: '500' }}>{entry.changed_by}</span>

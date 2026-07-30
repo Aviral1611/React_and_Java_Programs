@@ -12,7 +12,13 @@ This guide covers how to set up Phase 2 of the React + Java project, focusing on
 ## 1. Database Setup
 
 1. Open your database management tool.
-2. Run the `db_setup.sql` script located in the root directory to create the necessary tables and initial data.
+2. Run these scripts from the repository root in this order:
+   - `db_setup.sql`
+   - `document_setup.sql`
+   - `pdf_setup.sql` (only once, because it adds columns)
+   - `annotation_setup.sql`
+
+`annotation_setup.sql` is safe to run again and creates the table used to reload saved PDF annotations.
 
 ## 2. Backend Setup (Eclipse)
 
@@ -30,7 +36,7 @@ Since we are not using Maven or Gradle, we will configure the project manually i
    - Go to the **Libraries** tab.
    - Select **Classpath** (or just use the main view if you are on an older Java version).
    - Click **Add External JARs...**
-   - Select any required JARs for your project (for example, the JDBC driver for your database like `mysql-connector-j-x.x.x.jar` or `postgresql-x.x.x.jar`).
+   - Add the MySQL JDBC driver, Jackson Databind (plus its Core and Annotations JARs), and Apache PDFBox 3 (plus its required JARs).
    - Click **Apply and Close**.
 
 3. **Running the Server:**

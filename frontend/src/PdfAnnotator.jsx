@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, MessageSquare, Highlighter, Loader2, MousePointer } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -16,7 +16,7 @@ function PdfAnnotator() {
 
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
-  const [scale, setScale] = useState(1.5);
+  const [scale] = useState(1.5);
   const [annotations, setAnnotations] = useState([]);
   const [mode, setMode] = useState('select'); // 'select', 'comment', 'highlight'
   const [loading, setLoading] = useState(true);
@@ -30,23 +30,35 @@ function PdfAnnotator() {
   const pageCanvasRefs = useRef({});
   const overlayRefs = useRef({});
   const renderTasks = useRef({});
+  const saveInProgressRef = useRef(false);
 
   // Load the PDF
   useEffect(() => {
     const loadPdf = async () => {
       const token = localStorage.getItem('token');
       try {
-        const response = await fetch(`http://localhost:8080/api/documents/${id}/download`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!response.ok) {
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const [pdfResponse, annotationsResponse] = await Promise.all([
+          fetch(`http://localhost:8080/api/documents/${id}/download`, { headers }),
+          fetch(`http://localhost:8080/api/documents/${id}/annotations`, { headers })
+        ]);
+
+        if (!pdfResponse.ok) {
           setError('Failed to load PDF.');
           setLoading(false);
           return;
         }
-        const blob = await response.blob();
+        if (!annotationsResponse.ok) {
+          setError('The PDF loaded, but its saved annotations could not be loaded.');
+          setLoading(false);
+          return;
+        }
+
+        const blob = await pdfResponse.blob();
+        const savedAnnotations = await annotationsResponse.json();
         const arrayBuffer = await blob.arrayBuffer();
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        setAnnotations(savedAnnotations);
         setPdfDoc(pdf);
         setNumPages(pdf.numPages);
         setLoading(false);
@@ -78,12 +90,18 @@ function PdfAnnotator() {
           renderTasks.current[pageNum].cancel();
         }
         
-        const renderTask = page.render({ canvasContext: ctx, viewport });
+        // The overlay below renders annotations loaded from the database.
+        // Disable PDF.js annotation painting so saved annotations are not duplicated.
+        const renderTask = page.render({
+          canvasContext: ctx,
+          viewport,
+          annotationMode: pdfjsLib.AnnotationMode.DISABLE
+        });
         renderTasks.current[pageNum] = renderTask;
         
         try {
           await renderTask.promise;
-        } catch (err) {
+        } catch {
           // Ignore cancelled renders
         }
 
@@ -135,12 +153,14 @@ function PdfAnnotator() {
 
     if (width > 5 && height > 3) { // Minimum size to avoid accidental clicks
       setAnnotations(prev => [...prev, {
+        id: crypto.randomUUID(),
         type: 'highlight',
         page: pageNum,
         x: Math.min(highlightStart.x, endX),
         y: Math.min(highlightStart.y, endY),
         width,
-        height
+        height,
+        saved: false
       }]);
     }
     setHighlightStart(null);
@@ -150,11 +170,13 @@ function PdfAnnotator() {
   const saveComment = () => {
     if (!commentText.trim() || !commentPopup) return;
     setAnnotations(prev => [...prev, {
+      id: crypto.randomUUID(),
       type: 'comment',
       page: commentPopup.page,
       x: commentPopup.x,
       y: commentPopup.y,
-      text: commentText.trim()
+      text: commentText.trim(),
+      saved: false
     }]);
     setCommentPopup(null);
     setCommentText('');
@@ -162,11 +184,15 @@ function PdfAnnotator() {
 
   // Save annotations to backend
   const handleSave = async () => {
-    if (annotations.length === 0) {
+    if (saveInProgressRef.current) return;
+
+    const pendingAnnotations = annotations.filter(annotation => !annotation.saved);
+    if (pendingAnnotations.length === 0) {
       setError('Add at least one annotation before saving.');
       return;
     }
 
+    saveInProgressRef.current = true;
     setSaving(true);
     setError('');
     const token = localStorage.getItem('token');
@@ -178,7 +204,7 @@ function PdfAnnotator() {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ annotations })
+        body: JSON.stringify({ annotations: pendingAnnotations })
       });
 
       if (response.ok) {
@@ -187,9 +213,10 @@ function PdfAnnotator() {
         const data = await response.json();
         setError(data.error || 'Failed to save annotations.');
       }
-    } catch (err) {
+    } catch {
       setError('Error connecting to server.');
     } finally {
+      saveInProgressRef.current = false;
       setSaving(false);
     }
   };
@@ -252,11 +279,11 @@ function PdfAnnotator() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            {annotations.length} annotation{annotations.length !== 1 ? 's' : ''}
+            {annotations.length} total · {annotations.filter(annotation => !annotation.saved).length} unsaved
           </span>
           <button 
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || annotations.every(annotation => annotation.saved)}
             className="btn-primary"
             style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem', opacity: saving ? 0.7 : 1 }}
           >
@@ -380,8 +407,8 @@ function PdfAnnotator() {
       {annotations.length > 0 && (
         <div className="glass-panel" style={{ position: 'fixed', right: '1rem', top: '50%', transform: 'translateY(-50%)', width: '250px', maxHeight: '400px', overflowY: 'auto', padding: '1rem', zIndex: 100 }}>
           <h3 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '0.75rem', color: 'var(--primary)' }}>Annotations ({annotations.length})</h3>
-          {annotations.map((ann, idx) => (
-            <div key={idx} style={{ 
+          {annotations.map((ann) => (
+            <div key={ann.id} style={{
               padding: '0.5rem', marginBottom: '0.5rem', 
               background: 'rgba(0,0,0,0.2)', borderRadius: '6px',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center'
@@ -390,13 +417,20 @@ function PdfAnnotator() {
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   Page {ann.page} — {ann.type === 'comment' ? '💬 ' + ann.text.substring(0, 30) : '🟡 Highlight'}
                 </span>
+                {ann.saved && (
+                  <span style={{ display: 'block', marginTop: '0.2rem', fontSize: '0.65rem', color: 'var(--primary)' }}>
+                    Saved{ann.createdBy ? ` by ${ann.createdBy}` : ''}
+                  </span>
+                )}
               </div>
-              <button 
-                onClick={() => setAnnotations(prev => prev.filter((_, i) => i !== idx))}
-                style={{ background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer', fontSize: '0.8rem' }}
-              >
-                ✕
-              </button>
+              {!ann.saved && (
+                <button
+                  onClick={() => setAnnotations(prev => prev.filter(annotation => annotation.id !== ann.id))}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer', fontSize: '0.8rem' }}
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
         </div>

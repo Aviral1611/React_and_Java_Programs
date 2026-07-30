@@ -10,7 +10,9 @@ import java.io.OutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileInputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -26,13 +28,15 @@ import javax.crypto.spec.SecretKeySpec;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationHighlight;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
-import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationSquare;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 
@@ -306,12 +310,20 @@ public class Main {
                 // Route: GET /api/documents/{id} or /api/documents/{id}/history or /api/documents/{id}/download
                 else if (method.equals("GET") && path.startsWith("/api/documents/")) {
                     String suffix = path.substring("/api/documents/".length());
-                    if (suffix.endsWith("/history")) {
+                    String[] pathParts = suffix.split("/");
+                    if (pathParts.length == 4
+                            && "history".equals(pathParts[1])
+                            && "download".equals(pathParts[3])) {
+                        handleDownloadPdfHistory(t, pathParts[0], pathParts[2]);
+                    } else if (suffix.endsWith("/history")) {
                         String id = suffix.substring(0, suffix.length() - "/history".length());
                         handleGetHistory(t, id);
                     } else if (suffix.endsWith("/download")) {
                         String id = suffix.substring(0, suffix.length() - "/download".length());
                         handleDownloadPdf(t, id);
+                    } else if (suffix.endsWith("/annotations")) {
+                        String id = suffix.substring(0, suffix.length() - "/annotations".length());
+                        handleGetPdfAnnotations(t, id);
                     } else {
                         handleGetDocument(t, suffix);
                     }
@@ -489,32 +501,77 @@ public class Main {
         }
 
         private void handleGetHistory(HttpExchange t, String docId) throws Exception {
-            StringBuilder jsonBuilder = new StringBuilder();
-            jsonBuilder.append("[");
-            
+            ObjectMapper mapper = new ObjectMapper();
+            ArrayNode result = mapper.createArrayNode();
+
             try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                String query = "SELECT old_title, old_content, changed_by, changed_at FROM document_history WHERE doc_id = ? ORDER BY changed_at DESC";
+                String query =
+                    "SELECT h.history_id, h.old_title, h.old_content, h.changed_by, h.changed_at, d.doc_type " +
+                    "FROM document_history h JOIN documents d ON d.doc_id = h.doc_id " +
+                    "WHERE h.doc_id = ? ORDER BY h.changed_at DESC, h.history_id DESC";
                 try (PreparedStatement stmt = conn.prepareStatement(query)) {
                     stmt.setString(1, docId);
                     try (ResultSet rs = stmt.executeQuery()) {
-                        boolean first = true;
                         while (rs.next()) {
-                            if (!first) {
-                                jsonBuilder.append(",");
+                            ObjectNode entry = result.addObject();
+                            String docType = rs.getString("doc_type");
+                            entry.put("history_id", rs.getInt("history_id"));
+                            entry.put("old_title", rs.getString("old_title"));
+                            entry.put("doc_type", docType == null ? "text" : docType);
+                            if (!"pdf".equals(docType)) {
+                                entry.put("old_content", rs.getString("old_content"));
                             }
-                            first = false;
-                            jsonBuilder.append("{");
-                            jsonBuilder.append("\"old_title\":\"").append(rs.getString("old_title").replace("\"", "\\\"")).append("\",");
-                            jsonBuilder.append("\"old_content\":\"").append(rs.getString("old_content").replace("\"", "\\\"").replace("\n", "\\n")).append("\",");
-                            jsonBuilder.append("\"changed_by\":\"").append(rs.getString("changed_by")).append("\",");
-                            jsonBuilder.append("\"changed_at\":\"").append(rs.getTimestamp("changed_at")).append("\"");
-                            jsonBuilder.append("}");
+                            entry.put("changed_by", rs.getString("changed_by"));
+                            entry.put("changed_at", rs.getTimestamp("changed_at").toInstant().toString());
                         }
                     }
                 }
             }
-            jsonBuilder.append("]");
-            sendJsonResponse(t, 200, jsonBuilder.toString());
+            sendJsonResponse(t, 200, mapper.writeValueAsString(result));
+        }
+
+        private void handleGetPdfAnnotations(HttpExchange t, String docId) throws Exception {
+            ObjectMapper mapper = new ObjectMapper();
+            ArrayNode result = mapper.createArrayNode();
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query =
+                    "SELECT annotation_id, annotation_type, page_number, x_position, y_position, " +
+                    "annotation_width, annotation_height, comment_text, created_by, created_at " +
+                    "FROM pdf_annotations WHERE doc_id = ? ORDER BY created_at, annotation_id";
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, docId);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            ObjectNode annotation = result.addObject();
+                            annotation.put("id", rs.getString("annotation_id"));
+                            annotation.put("type", rs.getString("annotation_type"));
+                            annotation.put("page", rs.getInt("page_number"));
+                            annotation.put("x", rs.getDouble("x_position"));
+                            annotation.put("y", rs.getDouble("y_position"));
+
+                            double width = rs.getDouble("annotation_width");
+                            if (!rs.wasNull()) {
+                                annotation.put("width", width);
+                            }
+                            double height = rs.getDouble("annotation_height");
+                            if (!rs.wasNull()) {
+                                annotation.put("height", height);
+                            }
+
+                            String commentText = rs.getString("comment_text");
+                            if (commentText != null) {
+                                annotation.put("text", commentText);
+                            }
+                            annotation.put("createdBy", rs.getString("created_by"));
+                            annotation.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
+                            annotation.put("saved", true);
+                        }
+                    }
+                }
+            }
+
+            sendJsonResponse(t, 200, mapper.writeValueAsString(result));
         }
 
         private void handleUploadPdf(HttpExchange t, String username) throws Exception {
@@ -607,6 +664,65 @@ public class Main {
             }
         }
 
+        private void handleDownloadPdfHistory(HttpExchange t, String docId, String historyIdText) throws Exception {
+            int historyId;
+            try {
+                historyId = Integer.parseInt(historyIdText);
+            } catch (NumberFormatException e) {
+                sendJsonResponse(t, 400, "{\"error\": \"Invalid history version\"}");
+                return;
+            }
+
+            String filePath = null;
+            String title = null;
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+                String query =
+                    "SELECT h.old_title, h.old_content FROM document_history h " +
+                    "JOIN documents d ON d.doc_id = h.doc_id " +
+                    "WHERE h.history_id = ? AND h.doc_id = ? AND d.doc_type = 'pdf'";
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setInt(1, historyId);
+                    stmt.setString(2, docId);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            title = rs.getString("old_title");
+                            filePath = rs.getString("old_content");
+                        } else {
+                            sendJsonResponse(t, 404, "{\"error\": \"PDF history version not found\"}");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            File file = new File(filePath);
+            if (!file.isFile()) {
+                sendJsonResponse(t, 404, "{\"error\": \"PDF history file not found on disk\"}");
+                return;
+            }
+
+            String downloadTitle = title == null || title.trim().isEmpty() ? "previous-version.pdf" : title;
+            if (!downloadTitle.toLowerCase().endsWith(".pdf")) {
+                downloadTitle += ".pdf";
+            }
+            t.getResponseHeaders().set("Content-Type", "application/pdf");
+            t.getResponseHeaders().set(
+                "Content-Disposition",
+                "attachment; filename=\"" + downloadTitle.replace("\"", "") + "\""
+            );
+            t.sendResponseHeaders(200, file.length());
+
+            try (FileInputStream fis = new FileInputStream(file);
+                 OutputStream os = t.getResponseBody()) {
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    os.write(buffer, 0, bytesRead);
+                }
+                os.flush();
+            }
+        }
+
         private void handleAnnotatePdf(HttpExchange t, String docId, String username) throws Exception {
             // 1. Read annotation data from request
             InputStream is = t.getRequestBody();
@@ -620,115 +736,286 @@ public class Main {
                 return;
             }
 
-            // 2. Get the current PDF file path from DB
-            String filePath = null;
+            Path temporaryFile = null;
+            Path backupFile = null;
+            Path currentPath = null;
+            boolean originalWasReplaced = false;
+            boolean saveCommitted = false;
+
+            // Keep the document row locked until both the PDF and its history row
+            // are safely updated. This also prevents two annotation requests from
+            // overwriting one another.
             try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                String query = "SELECT file_path FROM documents WHERE doc_id = ? AND doc_type = 'pdf'";
-                try (PreparedStatement stmt = conn.prepareStatement(query)) {
-                    stmt.setString(1, docId);
-                    try (ResultSet rs = stmt.executeQuery()) {
-                        if (rs.next()) {
-                            filePath = rs.getString("file_path");
-                        } else {
-                            sendJsonResponse(t, 404, "{\"error\": \"PDF document not found\"}");
-                            return;
+                conn.setAutoCommit(false);
+                try {
+                    // 2. Fetch and lock the current PDF record.
+                    String filePath = null;
+                    String title = null;
+                    String query = "SELECT title, file_path FROM documents WHERE doc_id = ? AND doc_type = 'pdf' FOR UPDATE";
+                    try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                        stmt.setString(1, docId);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            if (rs.next()) {
+                                title = rs.getString("title");
+                                filePath = rs.getString("file_path");
+                            } else {
+                                conn.rollback();
+                                sendJsonResponse(t, 404, "{\"error\": \"PDF document not found\"}");
+                                return;
+                            }
                         }
                     }
-                }
-            }
 
-            File currentFile = new File(filePath);
-            if (!currentFile.exists()) {
-                sendJsonResponse(t, 404, "{\"error\": \"PDF file not found on disk\"}");
-                return;
-            }
-
-            // 3. Copy current PDF to history backup
-            String backupName = docId + "_" + System.currentTimeMillis() + ".pdf";
-            File backupFile = new File(UPLOAD_DIR, backupName);
-            Files.copy(currentFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            System.out.println("[Annotate] Backed up old PDF to: " + backupFile.getAbsolutePath());
-
-            // 4. Save old version to document_history
-            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                String insertHistory = "INSERT INTO document_history (doc_id, old_title, old_content, changed_by) VALUES (?, ?, ?, ?)";
-                try (PreparedStatement pstmt = conn.prepareStatement(insertHistory)) {
-                    pstmt.setString(1, docId);
-                    pstmt.setString(2, "Pre-annotation version");
-                    pstmt.setString(3, backupFile.getAbsolutePath());
-                    pstmt.setString(4, username);
-                    pstmt.executeUpdate();
-                }
-            }
-
-            // 5. Use PDFBox to add annotations to the PDF
-            try (PDDocument document = Loader.loadPDF(currentFile)) {
-                for (JsonNode ann : annotations) {
-                    String type = ann.get("type").asText();
-                    int pageNum = ann.get("page").asInt() - 1; // 0-indexed in PDFBox
-
-                    if (pageNum < 0 || pageNum >= document.getNumberOfPages()) {
-                        continue; // Skip invalid page numbers
+                    if (filePath == null || filePath.trim().isEmpty()) {
+                        conn.rollback();
+                        sendJsonResponse(t, 404, "{\"error\": \"PDF file path is missing\"}");
+                        return;
                     }
 
-                    PDPage page = document.getPage(pageNum);
-                    PDRectangle mediaBox = page.getMediaBox();
-                    float pageHeight = mediaBox.getHeight();
+                    File currentFile = new File(filePath);
+                    if (!currentFile.isFile()) {
+                        conn.rollback();
+                        sendJsonResponse(t, 404, "{\"error\": \"PDF file not found on disk\"}");
+                        return;
+                    }
+                    currentPath = currentFile.toPath();
+                    Path parentDirectory = currentPath.toAbsolutePath().getParent();
+                    if (parentDirectory == null) {
+                        throw new IOException("Could not determine the PDF directory");
+                    }
 
-                    if ("comment".equals(type)) {
-                        float x = (float) ann.get("x").asDouble();
-                        float y = (float) ann.get("y").asDouble();
-                        String text = ann.get("text").asText();
+                    // Give every annotation a stable ID. If a successful response
+                    // was lost and the client retries the same request, return
+                    // success without embedding or storing the annotations twice.
+                    boolean anyAnnotationAlreadySaved = false;
+                    boolean allAnnotationsAlreadySaved = true;
+                    String annotationExistsSql =
+                        "SELECT 1 FROM pdf_annotations WHERE annotation_id = ? AND doc_id = ?";
+                    try (PreparedStatement existsStmt = conn.prepareStatement(annotationExistsSql)) {
+                        for (JsonNode ann : annotations) {
+                            String annotationId = normalizeAnnotationId(ann);
+                            existsStmt.setString(1, annotationId);
+                            existsStmt.setString(2, docId);
+                            try (ResultSet rs = existsStmt.executeQuery()) {
+                                boolean exists = rs.next();
+                                anyAnnotationAlreadySaved |= exists;
+                                allAnnotationsAlreadySaved &= exists;
+                            }
+                        }
+                    }
+                    if (allAnnotationsAlreadySaved) {
+                        conn.rollback();
+                        sendJsonResponse(t, 200, "{\"message\": \"Annotations were already saved\", \"alreadySaved\": true}");
+                        return;
+                    }
+                    if (anyAnnotationAlreadySaved) {
+                        throw new IllegalStateException("Annotation request contains a mixture of saved and unsaved IDs");
+                    }
 
-                        // Convert from top-left origin (browser) to bottom-left origin (PDF)
-                        float pdfY = pageHeight - y;
+                    // 3. Build the complete annotated PDF in a separate file.
+                    // PDFBox 3 must not save back to the same file it loaded.
+                    temporaryFile = Files.createTempFile(parentDirectory, docId + "_annotated_", ".pdf.tmp");
+                    try (PDDocument document = Loader.loadPDF(currentFile)) {
+                        for (JsonNode ann : annotations) {
+                            String type = ann.hasNonNull("type") ? ann.get("type").asText() : "";
+                            int pageNum = ann.hasNonNull("page") ? ann.get("page").asInt() - 1 : -1;
 
-                        PDAnnotationText comment = new PDAnnotationText();
-                        comment.setContents(text);
-                        comment.setRectangle(new PDRectangle(x, pdfY - 20, 20, 20));
-                        comment.setName(PDAnnotationText.NAME_COMMENT);
-                        comment.setTitlePopup(username);
-                        page.getAnnotations().add(comment);
+                            if (pageNum < 0 || pageNum >= document.getNumberOfPages()) {
+                                throw new IllegalArgumentException("Invalid annotation page: " + (pageNum + 1));
+                            }
 
-                    } else if ("highlight".equals(type)) {
-                        float x = (float) ann.get("x").asDouble();
-                        float y = (float) ann.get("y").asDouble();
-                        float width = (float) ann.get("width").asDouble();
-                        float height = (float) ann.get("height").asDouble();
+                            PDPage page = document.getPage(pageNum);
+                            PDRectangle mediaBox = page.getMediaBox();
+                            float pageHeight = mediaBox.getHeight();
 
-                        // Convert from top-left origin (browser) to bottom-left origin (PDF)
-                        float pdfY = pageHeight - y - height;
+                            if ("comment".equals(type)) {
+                                float x = requireNumber(ann, "x");
+                                float y = requireNumber(ann, "y");
+                                String text = ann.hasNonNull("text") ? ann.get("text").asText().trim() : "";
+                                if (text.isEmpty()) {
+                                    throw new IllegalArgumentException("Comment text is required");
+                                }
 
-                        PDAnnotationSquare highlight = new PDAnnotationSquare();
-                        PDRectangle rect = new PDRectangle(x, pdfY, width, height);
-                        highlight.setRectangle(rect);
-                        highlight.setColor(new PDColor(new float[]{1, 1, 0}, PDDeviceRGB.INSTANCE));
-                        highlight.setConstantOpacity(0.3f);
-                        highlight.setContents("Highlight");
-                        page.getAnnotations().add(highlight);
+                                // Convert from top-left origin (browser) to bottom-left origin (PDF).
+                                float pdfY = pageHeight - y;
+
+                                PDAnnotationText comment = new PDAnnotationText();
+                                comment.setContents(text);
+                                comment.setRectangle(new PDRectangle(x, pdfY - 20, 20, 20));
+                                comment.setName(PDAnnotationText.NAME_COMMENT);
+                                comment.setTitlePopup(username);
+                                page.getAnnotations().add(comment);
+                                comment.constructAppearances(document);
+
+                            } else if ("highlight".equals(type)) {
+                                float x = requireNumber(ann, "x");
+                                float y = requireNumber(ann, "y");
+                                float width = requireNumber(ann, "width");
+                                float height = requireNumber(ann, "height");
+                                if (width <= 0 || height <= 0) {
+                                    throw new IllegalArgumentException("Highlight dimensions must be positive");
+                                }
+
+                                // Convert from top-left origin (browser) to bottom-left origin (PDF).
+                                float pdfY = pageHeight - y - height;
+
+                                PDAnnotationHighlight highlight = new PDAnnotationHighlight();
+                                PDRectangle rect = new PDRectangle(x, pdfY, width, height);
+                                highlight.setRectangle(rect);
+                                highlight.setQuadPoints(new float[] {
+                                    rect.getLowerLeftX(), rect.getUpperRightY(),
+                                    rect.getUpperRightX(), rect.getUpperRightY(),
+                                    rect.getLowerLeftX(), rect.getLowerLeftY(),
+                                    rect.getUpperRightX(), rect.getLowerLeftY()
+                                });
+                                highlight.setColor(new PDColor(new float[]{1, 1, 0}, PDDeviceRGB.INSTANCE));
+                                highlight.setConstantOpacity(0.3f);
+                                highlight.setContents("Highlight");
+                                page.getAnnotations().add(highlight);
+                                highlight.constructAppearances(document);
+                            } else {
+                                throw new IllegalArgumentException("Unsupported annotation type: " + type);
+                            }
+                        }
+                        document.save(temporaryFile.toFile());
+                    }
+
+                    // Reopen the generated file before touching the original. A corrupt
+                    // or incomplete output therefore cannot become the current version.
+                    try (PDDocument validationDocument = Loader.loadPDF(temporaryFile.toFile())) {
+                        if (validationDocument.getNumberOfPages() == 0) {
+                            throw new IOException("Generated PDF contains no pages");
+                        }
+                    }
+
+                    // 4. Only now create one restorable history version.
+                    String backupName = docId + "_" + System.currentTimeMillis() + "_" + UUID.randomUUID() + ".pdf";
+                    backupFile = parentDirectory.resolve(backupName);
+                    Files.copy(currentPath, backupFile);
+
+                    String insertHistory = "INSERT INTO document_history (doc_id, old_title, old_content, changed_by) VALUES (?, ?, ?, ?)";
+                    try (PreparedStatement pstmt = conn.prepareStatement(insertHistory)) {
+                        pstmt.setString(1, docId);
+                        pstmt.setString(2, title);
+                        pstmt.setString(3, backupFile.toAbsolutePath().toString());
+                        pstmt.setString(4, username);
+                        pstmt.executeUpdate();
+                    }
+
+                    // 5. Persist the same annotations that were embedded in the PDF.
+                    String insertAnnotation =
+                        "INSERT INTO pdf_annotations " +
+                        "(annotation_id, doc_id, annotation_type, page_number, x_position, y_position, " +
+                        "annotation_width, annotation_height, comment_text, created_by) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    try (PreparedStatement pstmt = conn.prepareStatement(insertAnnotation)) {
+                        for (JsonNode ann : annotations) {
+                            String annotationType = ann.get("type").asText();
+                            pstmt.setString(1, ann.get("id").asText());
+                            pstmt.setString(2, docId);
+                            pstmt.setString(3, annotationType);
+                            pstmt.setInt(4, ann.get("page").asInt());
+                            pstmt.setDouble(5, ann.get("x").asDouble());
+                            pstmt.setDouble(6, ann.get("y").asDouble());
+
+                            if ("highlight".equals(annotationType)) {
+                                pstmt.setDouble(7, ann.get("width").asDouble());
+                                pstmt.setDouble(8, ann.get("height").asDouble());
+                                pstmt.setNull(9, java.sql.Types.LONGVARCHAR);
+                            } else {
+                                pstmt.setNull(7, java.sql.Types.DOUBLE);
+                                pstmt.setNull(8, java.sql.Types.DOUBLE);
+                                pstmt.setString(9, ann.get("text").asText());
+                            }
+                            pstmt.setString(10, username);
+                            pstmt.addBatch();
+                        }
+                        pstmt.executeBatch();
+                    }
+
+                    // 6. Atomically replace the current PDF when the filesystem allows it.
+                    moveReplacing(temporaryFile, currentPath);
+                    originalWasReplaced = true;
+                    temporaryFile = null;
+
+                    String updateSql = "UPDATE documents SET last_updated_by = ?, last_updated_at = CURRENT_TIMESTAMP WHERE doc_id = ?";
+                    try (PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
+                        pstmt.setString(1, username);
+                        pstmt.setString(2, docId);
+                        if (pstmt.executeUpdate() != 1) {
+                            throw new IOException("PDF document metadata was not updated");
+                        }
+                    }
+
+                    conn.commit();
+                    saveCommitted = true;
+                    System.out.println("[Annotate] Saved annotated PDF: " + currentPath.toAbsolutePath());
+                } catch (Exception e) {
+                    try {
+                        conn.rollback();
+                    } catch (Exception rollbackError) {
+                        e.addSuppressed(rollbackError);
+                    }
+
+                    // If replacement happened but the database operation failed, put
+                    // the exact previous version back before reporting the failure.
+                    if (originalWasReplaced && backupFile != null && currentPath != null && Files.exists(backupFile)) {
+                        try {
+                            Files.copy(backupFile, currentPath, StandardCopyOption.REPLACE_EXISTING);
+                            originalWasReplaced = false;
+                        } catch (Exception restoreError) {
+                            e.addSuppressed(restoreError);
+                        }
+                    }
+                    throw e;
+                } finally {
+                    try {
+                        conn.setAutoCommit(true);
+                    } catch (Exception ignored) {
+                        // The connection is about to close.
                     }
                 }
-
-                // 6. Save the annotated PDF to a temp file
-                document.save(currentFile.getAbsolutePath() + ".tmp");
-            } // document is automatically closed here, releasing the file lock
-
-            // Now safely replace the original file
-            File tempFile = new File(currentFile.getAbsolutePath() + ".tmp");
-            Files.move(tempFile.toPath(), currentFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            System.out.println("[Annotate] Saved annotated PDF: " + currentFile.getAbsolutePath());
-
-            // 7. Update timestamp in database
-            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
-                String updateSql = "UPDATE documents SET last_updated_by = ?, last_updated_at = CURRENT_TIMESTAMP WHERE doc_id = ?";
-                try (PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
-                    pstmt.setString(1, username);
-                    pstmt.setString(2, docId);
-                    pstmt.executeUpdate();
+            } finally {
+                if (temporaryFile != null) {
+                    Files.deleteIfExists(temporaryFile);
+                }
+                if (!saveCommitted && backupFile != null) {
+                    Files.deleteIfExists(backupFile);
                 }
             }
 
             sendJsonResponse(t, 200, "{\"message\": \"PDF annotated successfully\"}");
+        }
+
+        private float requireNumber(JsonNode annotation, String fieldName) {
+            JsonNode value = annotation.get(fieldName);
+            if (value == null || !value.isNumber()) {
+                throw new IllegalArgumentException("Annotation field '" + fieldName + "' must be a number");
+            }
+            return (float) value.asDouble();
+        }
+
+        private String normalizeAnnotationId(JsonNode annotation) {
+            String annotationId = annotation.hasNonNull("id")
+                ? annotation.get("id").asText().trim()
+                : UUID.randomUUID().toString();
+            try {
+                annotationId = UUID.fromString(annotationId).toString();
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Annotation ID must be a UUID");
+            }
+            if (annotation instanceof ObjectNode) {
+                ((ObjectNode) annotation).put("id", annotationId);
+            }
+            return annotationId;
+        }
+
+        private void moveReplacing(Path source, Path target) throws IOException {
+            try {
+                Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+            }
         }
     }
 }
