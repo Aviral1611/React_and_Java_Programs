@@ -341,7 +341,16 @@ public class Main {
                 else {
                     sendJsonResponse(t, 404, "{\"error\": \"Not Found\"}");
                 }
+            } catch (LinkageError e) {
+                System.err.println("[DocumentHandler] PDF/runtime dependency error while handling " + method + " " + path);
+                e.printStackTrace();
+                sendJsonResponse(
+                    t,
+                    500,
+                    "{\"error\": \"Backend PDF library is incomplete or has conflicting JAR versions. Check the Eclipse console.\"}"
+                );
             } catch (Exception e) {
+                System.err.println("[DocumentHandler] Request failed while handling " + method + " " + path);
                 e.printStackTrace();
                 sendJsonResponse(t, 500, "{\"error\": \"Internal server error\"}");
             }

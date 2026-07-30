@@ -210,8 +210,8 @@ function PdfAnnotator() {
       if (response.ok) {
         navigate('/dashboard');
       } else {
-        const data = await response.json();
-        setError(data.error || 'Failed to save annotations.');
+        const data = await response.json().catch(() => null);
+        setError(data?.error || `Failed to save annotations (server returned ${response.status}).`);
       }
     } catch {
       setError('Error connecting to server.');
