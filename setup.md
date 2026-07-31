@@ -28,7 +28,8 @@ Since we are not using Maven or Gradle, we will configure the project manually i
    - Open Eclipse and set your workspace to a convenient location.
    - Go to **File -> New -> Java Project**.
    - Set the **Project Name** to `backend`.
-   - Ensure the default location is unchecked, and point it to the `backend` folder inside your `React+Java` repository (`c:\Users\Aviral Bansal\Downloads\React+Java\backend`).
+   - Ensure the default location is unchecked, and point it to the `backend`
+     folder inside your local `React+Java` repository.
    - Click **Finish**.
 
 2. **Add External JARs:**
@@ -41,9 +42,25 @@ Since we are not using Maven or Gradle, we will configure the project manually i
 
 3. **Running the Server:**
    - The project uses the built-in `com.sun.net.httpserver.HttpServer` (or HttpsServer).
-   - Locate `Main.java` inside `src/`.
+   - In Package Explorer, locate `backend.Main` under `src/backend/Main.java`.
    - Right-click `Main.java` -> **Run As -> Java Application**.
-   - The server will start on port 8080 (or the port specified in your code).
+   - If an older Eclipse run configuration still points to the previous default-package class,
+     open **Run Configurations -> Java Application** and set the main class to `backend.Main`.
+   - The server starts on port 8080 unless `server.port` in `src/config.properties` overrides it.
+
+4. **Package Layout:**
+   - `backend` - application startup and dependency wiring
+   - `backend.config` - configuration loading
+   - `backend.controller` - HTTP endpoints, request parsing, and responses
+   - `backend.service` - application workflows and business rules
+   - `backend.dao` - SQL and database persistence
+   - `backend.model` - data passed between the layers and serialized as JSON
+   - `backend.security` - JWT creation and validation
+   - `backend.db` - database connection creation
+   - `backend.util` - shared HTTP utilities
+   - `backend.exception` - API errors and HTTP status codes
+
+For more detail, see `backend/README.md`.
 
 ## 3. Frontend Setup
 
